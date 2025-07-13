@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cvdpack"
+readme = "README.md"
+license = {file = "LICENSE"}
+dynamic = ["version"]
+
+description = "Quantize and video-compress your RGB/Depth/Flow/SurfaceNormal datasets"
+keywords = [
+    "computer vision",
+    "datasets"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+requires-python = ">3.11.0"
+dependencies = [
+    "numpy<2",
+    "opencv-python",
+    "imageio",
+]
+
+[project.optional-dependencies]
+slurm = [
+    "submitit"
+]
+
+
