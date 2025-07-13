@@ -21,7 +21,6 @@ requires-python = ">3.11.0"
 dependencies = [
     "numpy<2",
     "opencv-python",
-    "imageio",
 ]
 
 [project.optional-dependencies]
