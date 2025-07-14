@@ -329,7 +329,8 @@ def match_template_paths(
     
     glob_pattern = re.sub(r'\{[^}]*\}', '*', child_template)
 
-    for p in sorted(search_folder.rglob(glob_pattern)):
+    iter = tqdm(search_folder.rglob(glob_pattern), desc=f"Finding {template=}")
+    for p in sorted(list(iter)):
         teststr = str(p.relative_to(search_folder))
         m = regex.match(teststr)
         if m:
@@ -444,7 +445,6 @@ def find_video_jobs(
 
     if "{frame" in input_template.parts[-1]:
         input_template = input_template.parent
-    logger.info(f"Finding jobs for {input_template=}")
     paths = match_template_paths(input_template)
 
     skipped_for_lazy = 0
@@ -478,29 +478,6 @@ def find_video_jobs(
     logger.info(msg)
 
     return jobs
-
-def find_config_jobs(
-    input_folder: Path,
-    output_folder: Path,
-    config: dict,
-    extra_job_args: dict,
-    **kwargs
-):
-
-    jobs = []
-
-    for datatype_conf in config["data_types"]:
-        input_template = input_folder / datatype_conf["original_path_template"]
-        output_template = output_folder / datatype_conf["packed_path_template"]
-        jobs.extend(find_video_jobs(
-            input_template=input_template,
-            output_template=output_template,
-            extra_job_args={**extra_job_args, "config": datatype_conf},
-            **kwargs,
-        ))
-
-    return jobs
-
 
 def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
     if k_equals_v_strs is None:
@@ -602,6 +579,8 @@ def execute_jobs(
     slurm_args: list[str],
     tmp_folder: Path,
 ):
+    logger.info(f"Executing {len(jobs)} jobs with {paralell_mode=} {n_jobs=}")
+
     match paralell_mode:
         case "multiprocess":
             with multiprocessing.Pool(n_jobs) as pool:
@@ -653,23 +632,26 @@ def pack_dataset(
 
     subset = _parse_k_equals_v_strs(subset)
 
-    jobs = find_config_jobs(
-        input_folder=input_folder,
-        output_folder=output_folder,
-        config=config,
-        subset=subset,
-        lazy=lazy,
-        extra_job_args={"tmp_folder": tmp_folder},
-    )
+    jobs = []
+    for datatype_conf in config["data_types"]:
+        jobs.extend(find_video_jobs(
+            input_template=input_folder / datatype_conf["original_path_template"],
+            output_template=output_folder / datatype_conf["packed_path_template"],
+            subset=subset,
+            extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf},
+            lazy=lazy,
+        ))
 
     for i, dc in enumerate(config["data_types"]):
-        if dc.get("quantize_method", "NONE") not in ["NONE", "CHECKBOUNDS"]:
-            dc["quantizeprecision"] = _calculate_config_precision(
-                method=QuantizeMethod.from_str(dc["quantize_method"]),
-                low=float(dc["min_orig_val"]),
-                high=float(dc["max_orig_val"]),
-                dtype=dc["pack_dtype"],
-            )
+        quantize_method = dc.get("quantize_method", "NONE")
+        if quantize_method in ["NONE", "CHECKBOUNDS"]:
+            continue
+        dc["quantize_precision"] = _calculate_config_precision(
+            method=QuantizeMethod.from_str(quantize_method),
+            low=float(dc["min_orig_val"]),
+            high=float(dc["max_orig_val"]),
+            dtype=dc["pack_dtype"],
+        )
 
     execute_jobs(
         log_folder=output_folder / "logs",
@@ -702,14 +684,15 @@ def unpack_dataset(
 
     subset = _parse_k_equals_v_strs(subset)
 
-    jobs = find_config_jobs(
-        input_folder=input_folder,
-        output_folder=output_folder,
-        config=config,
-        subset=subset,
-        lazy=lazy,
-        extra_job_args={"tmp_folder": tmp_folder},
-    )
+    jobs = []
+    for datatype_conf in config["data_types"]:
+        jobs.extend(find_video_jobs(
+            input_template=input_folder / datatype_conf["packed_path_template"],
+            output_template=output_folder / datatype_conf["original_path_template"],
+            subset=subset,
+            extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf},
+            lazy=lazy,
+        ))
 
     execute_jobs(
         log_folder=output_folder / "logs",
@@ -786,7 +769,11 @@ def parse_args():
         type=str,
         nargs="?",
         default=None,
-        help="Restricts the pack/unpack to only operate on some scenes/gt/cameras.Must be list of key=value pairs, where keys match the template placeholders. e.g. scene=xyz, cam=left ",
+        help=(
+            "Restricts the pack/unpack to only operate on some scenes/gt/cameras. "
+            "Must be list of key=value pairs, where keys match the template placeholders. "
+            "e.g. scene=xyz, cam=left, etc."
+        ),
     )
     parser.add_argument("--tmp_folder", type=Path, default=None)
     parser.add_argument("--lazy", action="store_true", default=False)
