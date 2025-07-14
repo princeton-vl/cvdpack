@@ -22,10 +22,10 @@
         {
             "original_path_template": "{scene}/{split}/{vid}/flow/{frame:06d}_{framenext:06d}_flow.npy",
             "packed_path_template": "{scene}/{split}/{vid}/flow.mkv",
-            "min_orig_val": -512,
-            "max_orig_val": 512,
+            "min_orig_val": -200,
+            "max_orig_val": 200,
             "pack_dtype": "uint16",
-            "quantize_method": "SYMSQRT",
+            "quantize_method": "LINEAR",
             "out_of_bounds_method": "nan_warn"
         },    
         {

@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 from enum import Enum
+import itertools
 from pathlib import Path
 from string import Formatter
 from typing import Literal
@@ -21,7 +22,10 @@ try:
 except ImportError:
     submitit = None
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+SLURM_ARRAY_MAX = 500
 
 PARALELL_LEVELS = [
     "scene",
@@ -293,8 +297,9 @@ def pack_video(
     subprocess.check_output(command.split())
 
 
-def match_template_paths(folder: Path, template: str, allpaths: list[Path] = None):
+def match_template_paths(folder: Path, template: str):
     fmt = Formatter()
+
     parts = []
     for lit, field, *_ in fmt.parse(template):
         parts.append(re.escape(lit))
@@ -310,8 +315,10 @@ def match_template_paths(folder: Path, template: str, allpaths: list[Path] = Non
 
     def match_to_dict(m: re.Match):
         return {k: int(v) if v.isdigit() else v for k, v in m.groupdict().items()}
+    
+    glob_pattern = re.sub(r'\{[^}]*\}', '*', template)
 
-    for p in sorted(allpaths if allpaths else folder.rglob("*")):
+    for p in sorted(folder.rglob(glob_pattern)):
         teststr = str(p.relative_to(folder))
         m = regex.match(teststr)
         if m:
@@ -414,56 +421,52 @@ def unpack_frameset(
 def find_video_jobs(
     input_folder: Path,
     output_folder: Path,
-    config: dict,
+    datatype_config: dict,
     subset: dict,
     extra_kwargs: dict,
 ):
+
+    inp_template = datatype_config["original_path_template"]
+    template_parts = inp_template.split("/")
+    if "{frame" in inp_template and "{frame" not in template_parts[-1]:
+        raise ValueError(
+            "Video discovery assumes last part of path contains {{frame}} template"
+        )
+    if "{frame" in template_parts[-1]:
+        match_template = "/".join(template_parts[:-1])
+        extra_template = template_parts[-1]
+    else:
+        match_template = inp_template
+        extra_template = None
+
+    paths = match_template_paths(input_folder, match_template)
+
     jobs = []
+    for vid_info, vid_input_path in paths:
 
-    allpaths = list(tqdm(input_folder.rglob("*"), desc=f"Finding all paths in {input_folder=}"))
+        if subset and not all(
+            k not in vid_info or vid_info[k] == v for k, v in subset.items()
+        ):
+            continue
 
-    for i, conf in enumerate(config["data_types"]):
-        logger.info(f"Finding jobs for {conf['original_path_template']}")
+        if extra_template:
+            filled_extra = copy.copy(extra_template)
+            for k, v in vid_info.items():
+                filled_extra = filled_extra.replace(f"{{{k}}}", v)
+            vid_input_path = vid_input_path / filled_extra
+        jobs.append(
+            {
+                "input_path": vid_input_path,
+                "output_path": output_folder / datatype_config["packed_path_template"].format(**vid_info),
+                "config": datatype_config,
+                **extra_kwargs,
+            }
+        )
+    
+    if len(jobs) == 0:
+        raise ValueError(f"No jobs found for {input_folder/inp_template}")
 
-        inp_template = conf["original_path_template"]
-        template_parts = inp_template.split("/")
-        if "{frame" in inp_template and "{frame" not in template_parts[-1]:
-            raise ValueError(
-                "Video discovery assumes last part of path contains {{frame}} template"
-            )
-        if "{frame" in template_parts[-1]:
-            match_template = "/".join(template_parts[:-1])
-            extra_template = template_parts[-1]
-        else:
-            match_template = inp_template
-            extra_template = None
-
-        paths = match_template_paths(input_folder, match_template, allpaths=allpaths)
-
-        for vid_info, vid_input_path in paths:
-
-            if subset and not all(
-                k not in vid_info or vid_info[k] == v for k, v in subset.items()
-            ):
-                continue
-
-            if extra_template:
-                filled_extra = copy.copy(extra_template)
-                for k, v in vid_info.items():
-                    filled_extra = filled_extra.replace(f"{{{k}}}", v)
-                vid_input_path = vid_input_path / filled_extra
-            jobs.append(
-                {
-                    "input_path": vid_input_path,
-                    "output_path": output_folder / conf["packed_path_template"].format(**vid_info),
-                    "config": conf,
-                    **extra_kwargs,
-                }
-            )
-
-    logger.info(f"Found {len(jobs)} jobs")
-    for job in jobs:
-        logger.info(f"Job {job['input_path']} -> {job['output_path']}")
+    logger.info(f"Found {len(jobs)} jobs for {input_folder/inp_template}")
 
     return jobs
 
@@ -473,7 +476,10 @@ def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
         return {}
     args = {}
     for arg in k_equals_v_strs:
-        k, v = arg.split("=")
+        parts = arg.split("=")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid {arg=}, had {len(parts)=}")
+        k, v = parts
         args[k] = v
     return args
 
@@ -542,13 +548,17 @@ def pack_dataset(
 
     subset = _parse_k_equals_v_strs(subset)
     extra_kwargs = {"tmp_folder": tmp_folder}
-    jobs = find_video_jobs(
-        input_folder, 
-        output_folder, 
-        config, 
-        subset,
-        extra_kwargs
-    )
+
+    jobs = list(itertools.chain.from_iterable(
+        find_video_jobs(
+            input_folder, 
+            output_folder, 
+            datatype_conf,     
+            subset,
+            extra_kwargs
+        )
+        for datatype_conf in config["data_types"]    
+    ))
 
     for i, dc in enumerate(config["data_types"]):
         if dc.get("quantize_method", "NONE") not in ["NONE", "CHECKBOUNDS"]:
@@ -570,15 +580,23 @@ def pack_dataset(
                 )
             logdir = output_folder / "logs"
             logdir.mkdir(parents=True, exist_ok=True)
-            executor = submitit.SlurmExecutor(
+            executor = submitit.AutoExecutor(
                 folder=logdir,
-                name="cvdpack",
-                timeout_min=120,
+            )
+            executor.update_parameters(
+                slurm_mem_gb=4,
+                slurm_cpus_per_task=4,
+                slurm_time=60,
+                slurm_array_parallelism=n_jobs,
             )
             if slurm_args:
                 slurm_args = _parse_k_equals_v_strs(slurm_args)
                 executor.update_parameters(**slurm_args)
-            executor.map_array(process_video_job, jobs)
+            for i in range(0, len(jobs), SLURM_ARRAY_MAX):
+                launched = executor.map_array(process_video_job, jobs[i:i+SLURM_ARRAY_MAX])
+                for j in launched:
+                    logger.info(f"Waiting for job {j.job_id}")
+                    print(j.job_id, j.result())
         case _:
             for job in jobs:
                 process_video_job(job)
@@ -659,7 +677,6 @@ def format_for_json(obj):
 def main():
 
     args = parse_args()
-    logging.basicConfig(level=args.log_level)
 
     start = time.time()
 

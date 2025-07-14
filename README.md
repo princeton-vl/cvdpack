@@ -39,7 +39,7 @@ python -m cvdpack.main unpack dataset --input TartanAir_packed --output TartanAi
 Pack tartanair on the ionic cluster using /scratch tmp
 
 ```bash
-python -m cvdpack.main pack dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/TartainAirPacked --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_jobs 10 --slurm_args account=pvl nodelist=nodelist=node007,node[020-026],node[101-104],node403
+python -m cvdpack.main pack dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/TartainAirPacked --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_jobs 10 --slurm_args account=pvl nodelist=nodelist=node007,node[020-026],node[101-104],node403 cpus=4
 ```
 
 TartanAir, step by step
@@ -73,7 +73,7 @@ Infinigen video scene
 I have no particular intention to continue adding features to this project. 
 
 However, potential ideas would include:
-- [ ] allow per-video min/max quantize vals
+- [ ] Allow scp-style prefixes to input and/or output path, in which case we read/write from remotes in a streaming fashion
 - [ ] Pack non-video framesets as compressed&chunked h5 (?) arrays
 - [ ] Store stereo datasets efficiently by storing only left-frame info + sparse rightframe info
 - [ ] Sbatch script which loads a dataset for you on job startup
