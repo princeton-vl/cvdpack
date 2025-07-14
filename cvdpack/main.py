@@ -162,15 +162,18 @@ def unnormalize_vals(
     img: np.ndarray,
     min_orig_val: float,
     max_orig_val: float,
+    to_dtype: np.dtype,
     quantize_method: QuantizeMethod,
 ) -> np.ndarray:
     match quantize_method:
+        case QuantizeMethod.CHECKBOUNDS:
+            return img.astype(to_dtype)
         case QuantizeMethod.LINEAR:
-            return img * (max_orig_val - min_orig_val) + min_orig_val
+            return img.astype(to_dtype) * (max_orig_val - min_orig_val) + min_orig_val
         case QuantizeMethod.INV:
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
-            img_inv = (img - min_norm) / (max_norm - min_norm)
+            img_inv = (img.astype(to_dtype) - min_norm) / (max_norm - min_norm)
             return 1 / img_inv
         case _:
             raise ValueError(f"Invalid {quantize_method=}")
@@ -179,7 +182,7 @@ def unnormalize_vals(
 def quantize_frame(
     input_img_path: Path,
     output_img_path: Path,
-    to_dtype: str,
+    to_dtype: np.dtype,
     quantize_method: QuantizeMethod,
     min_orig_val: float,
     max_orig_val: float,
@@ -189,7 +192,6 @@ def quantize_frame(
 
     from_dtype = img.dtype
 
-    to_dtype = DTYPE_MAP[to_dtype]
     assert np.issubdtype(to_dtype, np.integer)
     assert not np.issubdtype(to_dtype, np.signedinteger), (
         f"Cannot quantize to signed integer: {to_dtype=}"
@@ -347,7 +349,7 @@ def match_template_paths(
 def pack_frameset(
     input_path_template: Path,
     output_path_template: Path,
-    to_dtype: str,
+    to_dtype: np.dtype,
     quantize_method: QuantizeMethod,
     min_orig_val: float,
     max_orig_val: float,
@@ -378,8 +380,8 @@ def pack_frameset(
 def unquantize_frame(
     input_img_path: Path,
     output_img_path: Path,
-    to_dtype: str,
-    quantize_method: str,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
     min_orig_val: float,
     max_orig_val: float,
 ):
@@ -388,8 +390,13 @@ def unquantize_frame(
 
     assert np.issubdtype(img.dtype, np.integer), f"{input_img_path=} had {img.dtype=}"
 
-    img_unquant = unnormalize_vals(img, min_orig_val, max_orig_val, quantize_method)
-    img_unquant = img_unquant.astype(DTYPE_MAP[to_dtype])
+    img_unquant = unnormalize_vals(
+        img,
+        min_orig_val,
+        max_orig_val,
+        to_dtype=to_dtype,
+        quantize_method=quantize_method,
+    )
 
     isnan = img == np.iinfo(img.dtype).max
     img_unquant[isnan] = np.nan
@@ -406,7 +413,7 @@ def unquantize_frame(
 def unpack_frameset(
     input_path_template: Path,
     output_path_template: Path,
-    to_dtype: str,
+    to_dtype: np.dtype,
     quantize_method: QuantizeMethod,
     min_orig_val: float,
     max_orig_val: float,
@@ -496,9 +503,12 @@ def find_jobs(
     return jobs
 
 
-def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
+def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | str | None):
     if k_equals_v_strs is None:
         return {}
+    elif isinstance(k_equals_v_strs, str):
+        k_equals_v_strs = k_equals_v_strs.split(" ")
+
     args = {}
     for arg in k_equals_v_strs:
         parts = arg.split("=")
@@ -542,7 +552,7 @@ def process_video_job(job: dict):
             pack_frameset(
                 input_path,
                 tmp_template,
-                to_dtype=job["config"]["pack_dtype"],
+                to_dtype=DTYPE_MAP[job["config"]["pack_dtype"]],
                 quantize_method=QuantizeMethod.from_str(
                     job["config"]["quantize_method"]
                 ),
@@ -559,7 +569,7 @@ def process_video_job(job: dict):
             unpack_frameset(
                 tmp_frames,
                 output_path,
-                to_dtype=job["config"]["unpack_dtype"],
+                to_dtype=DTYPE_MAP[job["config"]["unpack_dtype"]],
                 quantize_method=QuantizeMethod.from_str(
                     job["config"]["quantize_method"]
                 ),
