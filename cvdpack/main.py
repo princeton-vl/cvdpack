@@ -571,7 +571,7 @@ def process_video_job(job: dict):
     shutil.rmtree(tmp_path)
 
 
-def wait_jobs(launched_jobs, n_already_finished, n_total):
+def wait_jobs(launched_jobs, pbar):
     """Wait for a list of submitted jobs to complete, checking periodically."""
     finished_jobs = set()
     while len(finished_jobs) < len(launched_jobs):
@@ -581,16 +581,15 @@ def wait_jobs(launched_jobs, n_already_finished, n_total):
             if j.state in ["PENDING", "RUNNING"]:
                 continue
 
-            progress = f"{n_already_finished + len(finished_jobs)}/{n_total}"
             try:
                 result = j.result()
-                logger.info(
-                    f"Job {j.job_id} completed successfully with {result=}. Progress: {progress}"
-                )
+                pbar.update(1)
+                pbar.set_description(f"Job {j.job_id} completed successfully")
             except Exception as e:
-                logger.error(
-                    f"Job {j.job_id} failed with error: {e}. Progress: {progress}"
-                )
+                msg = f"Job {j.job_id} failed with error: {e}"
+                pbar.update(1)
+                pbar.set_description(msg)
+                logger.error(msg)
             finished_jobs.add(j.job_id)
 
         time.sleep(1)
@@ -629,11 +628,13 @@ def execute_jobs(
             if slurm_args:
                 slurm_args = _parse_k_equals_v_strs(slurm_args)
                 executor.update_parameters(**slurm_args)
+
+            pbar = tqdm(total=len(jobs), desc="Running jobs")
             for i in range(0, len(jobs), SLURM_ARRAY_MAX):
                 launched = executor.map_array(
                     process_video_job, jobs[i : i + SLURM_ARRAY_MAX]
                 )
-                wait_jobs(launched, i, len(jobs))
+                wait_jobs(launched, pbar)
         case _:
             for job in jobs:
                 process_video_job(job)
