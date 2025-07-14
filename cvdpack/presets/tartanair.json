@@ -5,6 +5,7 @@
             "original_path_template": "{scene}/{split}/{vid}/image_{cam}/{frame:06d}.png",
             "packed_path_template": "{scene}/{split}/{vid}/image_{cam}.mkv",
             "pack_dtype": "uint8",
+            "unpack_dtype": "uint8",
             "min_orig_val": 0,
             "max_orig_val": 255,
             "quantize_method": "CHECKBOUNDS",
@@ -13,6 +14,7 @@
         {
             "original_path_template": "{scene}/{split}/{vid}/depth_{cam}/{frame:06d}_{cam}_depth.npy",
             "packed_path_template": "{scene}/{split}/{vid}/depth_{cam}.mkv",
+            "unpack_dtype": "float32",
             "min_orig_val": 0.5,
             "max_orig_val": 1000,
             "pack_dtype": "uint16",
@@ -22,6 +24,7 @@
         {
             "original_path_template": "{scene}/{split}/{vid}/flow/{frame:06d}_{framenext:06d}_flow.npy",
             "packed_path_template": "{scene}/{split}/{vid}/flow.mkv",
+            "unpack_dtype": "float32",
             "min_orig_val": -200,
             "max_orig_val": 200,
             "pack_dtype": "uint16",
@@ -31,6 +34,7 @@
         {
             "original_path_template": "{scene}/{split}/{vid}/flow/{frame:06d}_{framenext:06d}_mask.npy",
             "packed_path_template": "{scene}/{split}/{vid}/flow_mask.mkv",
+            "unpack_dtype": "uint8",
             "min_orig_val": 0,
             "max_orig_val": 255,
             "pack_dtype": "uint8",
@@ -40,6 +44,7 @@
         {
             "original_path_template": "{scene}/{split}/{vid}/seg_{cam}/{frame:06d}_{cam}_seg.npy",
             "packed_path_template": "{scene}/{split}/{vid}/seg_{cam}.mkv",
+            "unpack_dtype": "uint8",
             "min_orig_val": 0,
             "max_orig_val": 255,
             "pack_dtype": "uint8",
