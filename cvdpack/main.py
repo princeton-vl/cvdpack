@@ -551,7 +551,7 @@ def process_video_job(
 
     shutil.rmtree(tmp_path)
 
-def wait_jobs(launched_jobs):
+def wait_jobs(launched_jobs, n_already_finished, n_total):
     """Wait for a list of submitted jobs to complete, checking periodically."""
     finished_jobs = set()
     while len(finished_jobs) < len(launched_jobs):
@@ -560,11 +560,13 @@ def wait_jobs(launched_jobs):
                 continue
             if not j.state == "FINISHED":
                 continue
+
+            progress = f"{n_already_finished + len(finished_jobs)}/{n_total}"
             try:
                 result = j.result()
-                logger.info(f"Job {j.job_id} completed successfully with {result=}. Progress: {len(finished_jobs)}/{len(launched_jobs)}")
+                logger.info(f"Job {j.job_id} completed successfully with {result=}. Progress: {progress}")
             except Exception as e:
-                logger.error(f"Job {j.job_id} failed with error: {e}. Progress: {len(finished_jobs)}/{len(launched_jobs)}")
+                logger.error(f"Job {j.job_id} failed with error: {e}. Progress: {progress}")
             finished_jobs.add(j.job_id)
         
         time.sleep(1)
@@ -605,7 +607,7 @@ def execute_jobs(
                 executor.update_parameters(**slurm_args)
             for i in range(0, len(jobs), SLURM_ARRAY_MAX):
                 launched = executor.map_array(process_video_job, jobs[i:i+SLURM_ARRAY_MAX])
-                wait_jobs(launched)
+                wait_jobs(launched, i, len(jobs))
         case _:
             for job in jobs:
                 process_video_job(job)
