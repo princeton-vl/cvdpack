@@ -583,6 +583,7 @@ def process_video_job(job: dict):
 def wait_jobs(launched_jobs, pbar):
     """Wait for a list of submitted jobs to complete, checking periodically."""
     finished_jobs = set()
+    crashed_jobs = []
     while len(finished_jobs) < len(launched_jobs):
         for j in launched_jobs:
             if j.job_id in finished_jobs:
@@ -599,9 +600,12 @@ def wait_jobs(launched_jobs, pbar):
                 pbar.update(1)
                 pbar.set_description(msg)
                 logger.error(msg)
+                crashed_jobs.append(j)
             finished_jobs.add(j.job_id)
 
         time.sleep(1)
+
+    return crashed_jobs
 
 
 def execute_jobs(
@@ -639,11 +643,17 @@ def execute_jobs(
                 executor.update_parameters(**slurm_args)
 
             pbar = tqdm(total=len(jobs), desc="Running jobs")
+            crashed = []
             for i in range(0, len(jobs), SLURM_ARRAY_MAX):
                 launched = executor.map_array(
                     process_video_job, jobs[i : i + SLURM_ARRAY_MAX]
                 )
-                wait_jobs(launched, pbar)
+                crashed += wait_jobs(launched, pbar)
+            if len(crashed) > 0:
+                raise ValueError(
+                    f"{len(crashed)} jobs crashed, dataset is likely not safe to use. "
+                    f"Please check {log_folder} for ID_log.err and ID_log.out for each ID in {crashed}"
+                )
         case _:
             for job in jobs:
                 process_video_job(job)
