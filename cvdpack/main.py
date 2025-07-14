@@ -298,21 +298,18 @@ def pack_video(
 
 
 def match_template_paths(
-    folder: Path, 
-    template: str | None= None,
+    template: Path,
 ):
 
-    if template is None:
-        assert "{" in str(folder)
-        parts = folder.parts
-        first_curlypart = next(i for i, p in enumerate(parts) if "{" in p)
-        template = Path("/".join(parts[first_curlypart:]))
-        folder = Path("/".join(parts[:first_curlypart]))
+    parts = template.parts
+    first_curlypart = next(i for i, p in enumerate(parts) if "{" in p)
+    child_template = "/".join(parts[first_curlypart:])
+    search_folder = Path("/".join(parts[:first_curlypart]))
 
     fmt = Formatter()
 
     parts = []
-    for lit, field, *_ in fmt.parse(template):
+    for lit, field, *_ in fmt.parse(child_template):
         parts.append(re.escape(lit))
         if not field:
             continue
@@ -322,15 +319,18 @@ def match_template_paths(
         else:
             parts.append(rf"(?P<{field}>[^/\\]+)")
     regex = "^" + "".join(parts) + "$"
-    regex = re.compile(regex)
+    try:
+        regex = re.compile(regex)
+    except re.error as e:
+        raise ValueError(f"Invalid regex: {regex=}, {e=}") from e
 
     def match_to_dict(m: re.Match):
         return {k: int(v) if v.isdigit() else v for k, v in m.groupdict().items()}
     
-    glob_pattern = re.sub(r'\{[^}]*\}', '*', template)
+    glob_pattern = re.sub(r'\{[^}]*\}', '*', child_template)
 
-    for p in sorted(folder.rglob(glob_pattern)):
-        teststr = str(p.relative_to(folder))
+    for p in sorted(search_folder.rglob(glob_pattern)):
+        teststr = str(p.relative_to(search_folder))
         m = regex.match(teststr)
         if m:
             yield match_to_dict(m), p
@@ -345,9 +345,7 @@ def pack_frameset(
     max_orig_val: float,
     out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
 ):
-    all_files = match_template_paths(
-        input_path_template.parent, input_path_template.name
-    )
+    all_files = match_template_paths(input_path_template)
     all_files = list(all_files)
     logger.info(f"Found {len(all_files)} frames in {input_path_template=}")
 
@@ -407,23 +405,18 @@ def unpack_frameset(
     assert "{" in output_path_template.name, (
         f"Output path must contain a template: {output_path_template=}"
     )
-    all_files = match_template_paths(
-        input_path_template.parent, input_path_template.name
-    )
+    all_files = match_template_paths(input_path_template)
     logger.info(f"Found {len(all_files)} frames in {input_path_template=}")
 
     for frame_info, frame_input_path in all_files:
-        output_path = output_path_template.parent / output_path_template.name.format(
-            **frame_info
-        )
 
         unquantize_frame(
             frame_input_path,
-            output_path,
-            to_dtype,
+            output_img_path=format_template(output_path_template, frame_info),
+            to_dtype=to_dtype,
             quantize_method=quantize_method,
             min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
+            max_orig_val=max_orig_val, 
         )
 
 def format_template(template: Path, vals: dict):
@@ -442,13 +435,19 @@ def format_template(template: Path, vals: dict):
     return res
 
 def find_video_jobs(
-    search_folder: Path,
-    template: str,
+    input_template: Path,
+    output_template: Path,
     subset: dict,
     extra_job_args: dict,
+    lazy: bool,
 ):
 
-    paths = match_template_paths(search_folder, template)
+    if "{frame" in input_template.parts[-1]:
+        input_template = input_template.parent
+    logger.info(f"Finding jobs for {input_template=}")
+    paths = match_template_paths(input_template)
+
+    skipped_for_lazy = 0
 
     jobs = []
     for vid_info, vid_input_path in paths:
@@ -458,18 +457,47 @@ def find_video_jobs(
         ):
             continue
 
+        output_path = format_template(output_template, vid_info)
+        if lazy and output_path.exists():
+            skipped_for_lazy += 1
+            continue
+
         jobs.append(
             {
                 "input_path": vid_input_path,
-                "input_path_keys": vid_info,
+                "output_path": output_path,
                 **extra_job_args,
             }
         )
     
-    if len(jobs) == 0:
-        raise ValueError(f"No jobs found for {search_folder}/{template}")
+    if len(jobs) == 0 and skipped_for_lazy == 0:
+        raise ValueError(f"No jobs found for {input_template}")
+    msg = f"Found {len(jobs)} jobs for {input_template}"
+    if skipped_for_lazy > 0:
+        msg += f", skipped {skipped_for_lazy} due to --lazy flag"
+    logger.info(msg)
 
-    logger.info(f"Found {len(jobs)} jobs for {search_folder}/{template}")
+    return jobs
+
+def find_config_jobs(
+    input_folder: Path,
+    output_folder: Path,
+    config: dict,
+    extra_job_args: dict,
+    **kwargs
+):
+
+    jobs = []
+
+    for datatype_conf in config["data_types"]:
+        input_template = input_folder / datatype_conf["original_path_template"]
+        output_template = output_folder / datatype_conf["packed_path_template"]
+        jobs.extend(find_video_jobs(
+            input_template=input_template,
+            output_template=output_template,
+            extra_job_args={**extra_job_args, "config": datatype_conf},
+            **kwargs,
+        ))
 
     return jobs
 
@@ -525,7 +553,14 @@ def process_video_job(
             unpack_video(input_path, output_path)
         case ".mkv", _:
             unpack_video(input_path, tmp_path/"{frame:06d}.png")
-            unpack_frameset(tmp_path, output_path, **job["config"])
+            unpack_frameset(
+                tmp_path, 
+                output_path, 
+                to_dtype=job["config"]["unpack_dtype"],
+                quantize_method=QuantizeMethod.from_str(job["config"]["quantize_method"]),
+                min_orig_val=float(job["config"]["min_orig_val"]),
+                max_orig_val=float(job["config"]["max_orig_val"]),
+            )
         case ".txt", ".npy":
             data = np.loadtxt(input_path)
             assert "{" not in str(output_path), output_path
@@ -546,7 +581,7 @@ def wait_jobs(launched_jobs):
         for j in launched_jobs:
             if j.job_id in finished_jobs:
                 continue
-            if not j.status == "FINISHED":
+            if not j.state == "FINISHED":
                 continue
             try:
                 result = j.result()
@@ -606,6 +641,7 @@ def pack_dataset(
     n_jobs: int,
     tmp_folder: Path,
     subset: list[str],
+    lazy: bool,
 ):
 
     if config_path is None:
@@ -617,19 +653,14 @@ def pack_dataset(
 
     subset = _parse_k_equals_v_strs(subset)
 
-    jobs = list(itertools.chain.from_iterable(
-        find_video_jobs(
-            input_folder, 
-            template=datatype_conf["original_path_template"],     
-            subset=subset,
-            extra_job_args={
-                "config": datatype_conf,
-                "tmp_folder": tmp_folder,
-                "output_template": output_folder / datatype_conf["packed_path_template"],
-            }
-        )
-        for datatype_conf in config["data_types"]    
-    ))
+    jobs = find_config_jobs(
+        input_folder=input_folder,
+        output_folder=output_folder,
+        config=config,
+        subset=subset,
+        lazy=lazy,
+        extra_job_args={"tmp_folder": tmp_folder},
+    )
 
     for i, dc in enumerate(config["data_types"]):
         if dc.get("quantize_method", "NONE") not in ["NONE", "CHECKBOUNDS"]:
@@ -659,6 +690,7 @@ def unpack_dataset(
     n_jobs: int,
     subset: list[str],
     tmp_folder: Path,
+    lazy: bool,
 ):
 
     if config_path is None:
@@ -670,19 +702,14 @@ def unpack_dataset(
 
     subset = _parse_k_equals_v_strs(subset)
 
-    jobs = list(itertools.chain.from_iterable(
-        find_video_jobs(
-            input_folder, 
-            template=datatype_conf["packed_path_template"],     
-            subset=subset,
-            extra_job_args={
-                "config": datatype_conf,
-                "tmp_folder": tmp_folder,
-                "output_template": output_folder / datatype_conf["original_path_template"],
-            }
-        )
-        for datatype_conf in config["data_types"]    
-    ))
+    jobs = find_config_jobs(
+        input_folder=input_folder,
+        output_folder=output_folder,
+        config=config,
+        subset=subset,
+        lazy=lazy,
+        extra_job_args={"tmp_folder": tmp_folder},
+    )
 
     execute_jobs(
         log_folder=output_folder / "logs",
@@ -762,6 +789,7 @@ def parse_args():
         help="Restricts the pack/unpack to only operate on some scenes/gt/cameras.Must be list of key=value pairs, where keys match the template placeholders. e.g. scene=xyz, cam=left ",
     )
     parser.add_argument("--tmp_folder", type=Path, default=None)
+    parser.add_argument("--lazy", action="store_true", default=False)
 
     parser.add_argument("--overwrite", action="store_true", default=False)
     parser.add_argument("--log_level", type=str, default="INFO")
@@ -828,6 +856,7 @@ def main():
                 args.n_jobs,
                 args.tmp_folder,
                 args.subset,
+                args.lazy,
             )
         case "unpack", "dataset", _, _:
             if not args.input.is_dir():
@@ -842,6 +871,7 @@ def main():
                 args.n_jobs,
                 args.subset,
                 args.tmp_folder,
+                args.lazy,
             )
         case "reorganize", "dataset", _, _:
             targets = match_template_paths(args.input)
