@@ -1,0 +1,60 @@
+{
+    "metadata": {},
+    "data_types": [
+        {
+            "original_path_template": "{split}/flow/{scene}/frame_{frame:04d}.flo",
+            "packed_path_template": "{split}_{scene}_flow.mkv",
+            "pack_dtype": "uint16",
+            "min_orig_val": -300,
+            "max_orig_val": 300,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{split}/albedo/{scene}/frame_{frame:04d}.png",
+            "packed_path_template": "{split}_{scene}_albedo.mkv",
+            "pack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{split}/clean/{scene}/frame_{frame:04d}.png",
+            "packed_path_template": "{split}_{scene}_clean.mkv",
+            "pack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{split}/final/{scene}/frame_{frame:04d}.png",
+            "packed_path_template": "{split}_{scene}_final.mkv",
+            "pack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{split}/invalid/{scene}/frame_{frame:04d}.png",
+            "packed_path_template": "{split}_{scene}_invalid.mkv",
+            "pack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{split}/occlusions/{scene}/frame_{frame:04d}.png",
+            "packed_path_template": "{split}_{scene}_occlusions.mkv",
+            "pack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        }
+    ]
+}
+

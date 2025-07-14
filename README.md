@@ -39,7 +39,9 @@ python -m cvdpack.main unpack dataset --input TartanAir_packed --output TartanAi
 Pack tartanair on the ionic cluster using /scratch tmp
 
 ```bash
-python -m cvdpack.main pack dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/TartainAirPacked --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_jobs 10 --slurm_args account=pvl nodelist=nodelist=node007,node[020-026],node[101-104],node403 cpus=4
+screen python -m cvdpack.main pack dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/TartanAir_packed --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_jobs 100 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403 --overwrite
+
+screen python -m cvdpack.main unpack dataset --input /n/fs/scratch/$USER/TartanAir_packed --output /n/fs/scratch/$USER/TartanAir_unpacked --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_jobs 100 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
 TartanAir, step by step

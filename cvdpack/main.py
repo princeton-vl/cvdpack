@@ -10,7 +10,7 @@ from enum import Enum
 import itertools
 from pathlib import Path
 from string import Formatter
-from typing import Literal
+from typing import Literal, Callable
 
 import cv2
 import numpy as np
@@ -297,7 +297,18 @@ def pack_video(
     subprocess.check_output(command.split())
 
 
-def match_template_paths(folder: Path, template: str):
+def match_template_paths(
+    folder: Path, 
+    template: str | None= None,
+):
+
+    if template is None:
+        assert "{" in str(folder)
+        parts = folder.parts
+        first_curlypart = next(i for i, p in enumerate(parts) if "{" in p)
+        template = Path("/".join(parts[first_curlypart:]))
+        folder = Path("/".join(parts[:first_curlypart]))
+
     fmt = Formatter()
 
     parts = []
@@ -341,9 +352,7 @@ def pack_frameset(
     logger.info(f"Found {len(all_files)} frames in {input_path_template=}")
 
     for frame_info, frame_input_path in all_files:
-        output_path = output_path_template.parent / output_path_template.name.format(
-            **frame_info
-        )
+        output_path = format_template(output_path_template, frame_info)
 
         quantize_frame(
             frame_input_path,
@@ -417,29 +426,29 @@ def unpack_frameset(
             max_orig_val=max_orig_val,
         )
 
+def format_template(template: Path, vals: dict):
+    
+    def replace_func(match):
+        full_spec = match.group(1)
+        key = full_spec.split(':')[0]
+        if key in vals:
+            return ("{" + full_spec + "}").format(**{key: vals[key]})
+        return match.group(0)
+
+    res = re.sub(r'\{([^}]+)\}', replace_func, str(template))
+
+    if isinstance(template, Path):
+        return Path(res)
+    return res
 
 def find_video_jobs(
-    input_folder: Path,
-    output_folder: Path,
-    datatype_config: dict,
+    search_folder: Path,
+    template: str,
     subset: dict,
-    extra_kwargs: dict,
+    extra_job_args: dict,
 ):
 
-    inp_template = datatype_config["original_path_template"]
-    template_parts = inp_template.split("/")
-    if "{frame" in inp_template and "{frame" not in template_parts[-1]:
-        raise ValueError(
-            "Video discovery assumes last part of path contains {{frame}} template"
-        )
-    if "{frame" in template_parts[-1]:
-        match_template = "/".join(template_parts[:-1])
-        extra_template = template_parts[-1]
-    else:
-        match_template = inp_template
-        extra_template = None
-
-    paths = match_template_paths(input_folder, match_template)
+    paths = match_template_paths(search_folder, template)
 
     jobs = []
     for vid_info, vid_input_path in paths:
@@ -449,24 +458,18 @@ def find_video_jobs(
         ):
             continue
 
-        if extra_template:
-            filled_extra = copy.copy(extra_template)
-            for k, v in vid_info.items():
-                filled_extra = filled_extra.replace(f"{{{k}}}", v)
-            vid_input_path = vid_input_path / filled_extra
         jobs.append(
             {
                 "input_path": vid_input_path,
-                "output_path": output_folder / datatype_config["packed_path_template"].format(**vid_info),
-                "config": datatype_config,
-                **extra_kwargs,
+                "input_path_keys": vid_info,
+                **extra_job_args,
             }
         )
     
     if len(jobs) == 0:
-        raise ValueError(f"No jobs found for {input_folder/inp_template}")
+        raise ValueError(f"No jobs found for {search_folder}/{template}")
 
-    logger.info(f"Found {len(jobs)} jobs for {input_folder/inp_template}")
+    logger.info(f"Found {len(jobs)} jobs for {search_folder}/{template}")
 
     return jobs
 
@@ -488,18 +491,20 @@ def _calculate_config_precision(method, low, high, dtype):
     pass
 
 
-def process_video_job(job: dict):
+def process_video_job(
+    job: dict
+):
     tmp_folder = job["tmp_folder"]
     tmp_folder.mkdir(parents=True, exist_ok=True)
 
     input_path = Path(job["input_path"])
-    output_path = Path(job["output_path"])
+    output_path = format_template(job["output_template"], job["input_path_keys"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     tmp_path = tmp_folder / f"{hash(input_path)}_{hash(output_path)}"
     tmp_path.mkdir(parents=True, exist_ok=False)
 
-    logger.info(f"Processing {input_path} -> {output_path}")
+    logger.info(f"Processing {input_path} -> {tmp_path}{output_path}")
 
     match input_path.suffix, output_path.suffix:
         case ".png", ".mkv":
@@ -519,7 +524,7 @@ def process_video_job(job: dict):
         case ".mkv", ".png":
             unpack_video(input_path, output_path)
         case ".mkv", _:
-            unpack_video(input_path, tmp_path)
+            unpack_video(input_path, tmp_path/"{frame:06d}.png")
             unpack_frameset(tmp_path, output_path, **job["config"])
         case ".txt", ".npy":
             data = np.loadtxt(input_path)
@@ -534,41 +539,15 @@ def process_video_job(job: dict):
 
     shutil.rmtree(tmp_path)
 
-
-def pack_dataset(
-    input_folder: Path,
-    output_folder: Path,
-    config: dict,
-    paralell_mode: Literal["multiprocess", "slurm", "none"],
+def execute_jobs(
+    log_folder: Path,
+    func: Callable, 
+    jobs: list[dict], 
+    paralell_mode: Literal["multiprocess", "slurm", "none"], 
+    n_jobs: int, 
     slurm_args: list[str],
-    n_jobs: int,
     tmp_folder: Path,
-    subset: list[str],
 ):
-
-    subset = _parse_k_equals_v_strs(subset)
-    extra_kwargs = {"tmp_folder": tmp_folder}
-
-    jobs = list(itertools.chain.from_iterable(
-        find_video_jobs(
-            input_folder, 
-            output_folder, 
-            datatype_conf,     
-            subset,
-            extra_kwargs
-        )
-        for datatype_conf in config["data_types"]    
-    ))
-
-    for i, dc in enumerate(config["data_types"]):
-        if dc.get("quantize_method", "NONE") not in ["NONE", "CHECKBOUNDS"]:
-            dc["quantizeprecision"] = _calculate_config_precision(
-                method=QuantizeMethod.from_str(dc["quantize_method"]),
-                low=float(dc["min_orig_val"]),
-                high=float(dc["max_orig_val"]),
-                dtype=dc["pack_dtype"],
-            )
-
     match paralell_mode:
         case "multiprocess":
             with multiprocessing.Pool(n_jobs) as pool:
@@ -578,10 +557,9 @@ def pack_dataset(
                 raise ValueError(
                     "submitit is not installed. Please install, or install cvdpack[slurm] optional extras"
                 )
-            logdir = output_folder / "logs"
-            logdir.mkdir(parents=True, exist_ok=True)
+            log_folder.mkdir(parents=True, exist_ok=True)
             executor = submitit.AutoExecutor(
-                folder=logdir,
+                folder=log_folder,
             )
             executor.update_parameters(
                 slurm_mem_gb=4,
@@ -600,6 +578,104 @@ def pack_dataset(
         case _:
             for job in jobs:
                 process_video_job(job)
+    
+
+def pack_dataset(
+    input_folder: Path,
+    output_folder: Path,
+    config_path: Path | None,
+    paralell_mode: Literal["multiprocess", "slurm", "none"],
+    slurm_args: list[str],
+    n_jobs: int,
+    tmp_folder: Path,
+    subset: list[str],
+):
+
+    if config_path is None:
+        config_path = input_folder/"cvdpack.json"
+    if not config_path.exists():
+        raise ValueError(f"Could not find {config_path=}")
+    with config_path.open("r") as f:
+        config = json.load(f)
+
+    subset = _parse_k_equals_v_strs(subset)
+
+    jobs = list(itertools.chain.from_iterable(
+        find_video_jobs(
+            input_folder, 
+            template=datatype_conf["original_path_template"],     
+            subset=subset,
+            extra_job_args={
+                "config": datatype_conf,
+                "tmp_folder": tmp_folder,
+                "output_template": output_folder / datatype_conf["packed_path_template"],
+            }
+        )
+        for datatype_conf in config["data_types"]    
+    ))
+
+    for i, dc in enumerate(config["data_types"]):
+        if dc.get("quantize_method", "NONE") not in ["NONE", "CHECKBOUNDS"]:
+            dc["quantizeprecision"] = _calculate_config_precision(
+                method=QuantizeMethod.from_str(dc["quantize_method"]),
+                low=float(dc["min_orig_val"]),
+                high=float(dc["max_orig_val"]),
+                dtype=dc["pack_dtype"],
+            )
+
+    execute_jobs(
+        log_folder=output_folder / "logs",
+        func=process_video_job,
+        jobs=jobs,
+        paralell_mode=paralell_mode,
+        n_jobs=n_jobs,
+        slurm_args=slurm_args,
+        tmp_folder=tmp_folder,
+    )
+
+def unpack_dataset(
+    input_folder: Path,
+    output_folder: Path,
+    config_path: Path | None,
+    paralell_mode: Literal["multiprocess", "slurm", "none"],
+    slurm_args: list[str],
+    n_jobs: int,
+    subset: list[str],
+    tmp_folder: Path,
+):
+
+    if config_path is None:
+        config_path = input_folder/"cvdpack.json"
+    if not config_path.exists():
+        raise ValueError(f"Could not find {config_path=}")
+    with config_path.open("r") as f:
+        config = json.load(f)
+
+    subset = _parse_k_equals_v_strs(subset)
+
+    jobs = list(itertools.chain.from_iterable(
+        find_video_jobs(
+            input_folder, 
+            template=datatype_conf["packed_path_template"],     
+            subset=subset,
+            extra_job_args={
+                "config": datatype_conf,
+                "tmp_folder": tmp_folder,
+                "output_template": output_folder / datatype_conf["original_path_template"],
+            }
+        )
+        for datatype_conf in config["data_types"]    
+    ))
+
+    execute_jobs(
+        log_folder=output_folder / "logs",
+        func=process_video_job,
+        jobs=jobs,
+        paralell_mode=paralell_mode,
+        n_jobs=n_jobs,
+        slurm_args=slurm_args,
+        tmp_folder=tmp_folder,
+    )
 
 
 def validate_args(args: argparse.Namespace):
@@ -614,7 +690,13 @@ def validate_args(args: argparse.Namespace):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", type=str, choices=["pack", "unpack", "check"])
+    parser.add_argument(
+        "action", 
+        type=str, 
+        choices=[
+            "pack", "unpack", "check", "reorganize", "quantize", "unquantize",
+        ]
+    )
     parser.add_argument("level", type=str, choices=["dataset", "scene", "frameset"])
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -715,31 +797,37 @@ def main():
                 args.output,
             )
         case "pack", "dataset", _, _:
+
             if not args.input.is_dir():
                 raise ValueError(f"Input must be a directory: {args.input=}")
-
-            if not args.config:
-                raise ValueError("Must provide --config for `pack dataset`")
-            if args.config.suffix != ".json":
-                raise ValueError(f"Config file must be a json file: {args.config=}")
-
-            if not args.config.exists():
-                raise ValueError(f"Config file does not exist: checked {args.config=}")
-
-            with args.config.open("r") as f:
-                config = json.load(f)
 
             args.output.mkdir(parents=True, exist_ok=args.overwrite)
             pack_dataset(
                 args.input,
                 args.output,
-                config,
+                args.config,
                 args.parallel_mode,
                 args.slurm_args,
                 args.n_jobs,
                 args.tmp_folder,
                 args.subset,
             )
+        case "unpack", "dataset", _, _:
+            if not args.input.is_dir():
+                raise ValueError(f"Input must be a directory: {args.input=}")
+            args.output.mkdir(parents=True, exist_ok=args.overwrite)
+            unpack_dataset(
+                args.input,
+                args.output,
+                args.config,
+                args.parallel_mode,
+                args.slurm_args,
+                args.n_jobs,
+                args.subset,
+                args.tmp_folder,
+            )
+        case "reorganize", "dataset", _, _:
+            targets = match_template_paths(args.input)
         case _:
             raise ValueError(
                 f"Invalid {args.action=} {args.level=} {args.input.suffix=} {args.output.suffix=}"

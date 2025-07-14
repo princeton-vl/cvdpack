@@ -1,0 +1,24 @@
+{
+    "metadata": {},
+    "data_types": [
+        {
+            "original_path_template": "{scene}/dataset/data/{cam}/rgb/{frame:04d}.jpg",
+            "packed_path_template": "{scene}_{cam}_rgb.mkv",
+            "pack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{scene}/dataset/data/{cam}/disparity/{frame:04d}.png",
+            "packed_path_template": "{scene}_{cam}_disparity.mkv",
+            "pack_dtype": "uint16",
+            "min_orig_val": 0,
+            "max_orig_val": 32000,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        }
+    ]
+}
+
