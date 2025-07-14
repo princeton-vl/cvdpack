@@ -578,7 +578,7 @@ def wait_jobs(launched_jobs, n_already_finished, n_total):
         for j in launched_jobs:
             if j.job_id in finished_jobs:
                 continue
-            if not j.state == "FINISHED":
+            if j.state in ["PENDING", "RUNNING"]:
                 continue
 
             progress = f"{n_already_finished + len(finished_jobs)}/{n_total}"
