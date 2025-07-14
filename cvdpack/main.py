@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from cvdpack import __version__
 import time
-
+from tqdm import tqdm
 try:
     import submitit
 except ImportError:
@@ -420,7 +420,7 @@ def find_video_jobs(
 ):
     jobs = []
 
-    allpaths = list(input_folder.rglob("*"))
+    allpaths = list(tqdm(input_folder.rglob("*"), desc=f"Finding all paths in {input_folder=}"))
 
     for i, conf in enumerate(config["data_types"]):
         logger.info(f"Finding jobs for {conf['original_path_template']}")

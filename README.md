@@ -30,12 +30,17 @@ pip install -e .
 One line commands for TartanAir (using pre-written config)
 ```bash
 # pack
-python -m cvdpack.main pack dataset --input TartanAir/ --output TartanAir_packed/ --config presets/tartanair.json
+python -m cvdpack.main pack dataset --input TartanAir/ --output TartanAir_packed/ --config presets/tartanair.json --tmp_folder tmp/ --parallel_mode multiprocess --n_jobs 10
 
 #unpack
 python -m cvdpack.main unpack dataset --input TartanAir_packed --output TartanAir_unpacked
 ```
 
+Pack tartanair on the ionic cluster using /scratch tmp
+
+```bash
+python -m cvdpack.main pack dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/TartainAirPacked --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_jobs 10 --slurm_args account=pvl nodelist=nodelist=node007,node[020-026],node[101-104],node403
+```
 
 TartanAir, step by step
 ```bash
