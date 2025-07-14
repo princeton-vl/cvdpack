@@ -4,9 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cvdpack"
+version = "0.0.1"
+description = "Add your description here"
 readme = "README.md"
-license = {file = "LICENSE"}
-dynamic = ["version"]
+authors = [
+    { name = "Alexander Raistrick", email = "araistrick@princeton.edu" }
+]
 
 description = "Quantize and video-compress your RGB/Depth/Flow/SurfaceNormal datasets"
 keywords = [
@@ -29,4 +32,14 @@ slurm = [
     "submitit"
 ]
 
+[build-system]
+# based on https://github.com/astral-sh/trusted-publishing-examples/blob/main/pyproject.toml
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3.3",
+    "ruff>=0.7.1",
+]
 
