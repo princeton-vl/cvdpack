@@ -521,7 +521,15 @@ def process_video_job(job: dict):
     output_path = Path(job["output_path"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    tmp_path = tmp_folder / f"{hash(input_path)}_{hash(output_path)}"
+    out_str = str(output_path)
+    out_str = (
+        out_str.replace("{", "")
+        .replace("}", "")
+        .replace(":", "")
+        .replace("_", "-")
+        .replace("/", "_")
+    )
+    tmp_path = tmp_folder / out_str
     tmp_path.mkdir(parents=True, exist_ok=False)
 
     logger.info(f"Processing {input_path} -> {tmp_path}{output_path}")
@@ -546,9 +554,10 @@ def process_video_job(job: dict):
         case ".mkv", ".png":
             unpack_video(input_path, output_path)
         case ".mkv", _:
-            unpack_video(input_path, tmp_path / "{frame:06d}.png")
+            tmp_frames = tmp_path / "{frame:06d}.png"
+            unpack_video(input_path, tmp_frames)
             unpack_frameset(
-                tmp_path,
+                tmp_frames,
                 output_path,
                 to_dtype=job["config"]["unpack_dtype"],
                 quantize_method=QuantizeMethod.from_str(
