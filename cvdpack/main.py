@@ -13,6 +13,8 @@ from typing import Literal
 
 import cv2
 import numpy as np
+from cvdpack import __version__
+import time
 
 try:
     import submitit
@@ -412,7 +414,7 @@ def unpack_frameset(
 def find_video_jobs(
     input_folder: Path,
     output_folder: Path,
-    config: list[dict],
+    config: dict,
     subset: dict,
     extra_kwargs: dict,
 ):
@@ -420,7 +422,7 @@ def find_video_jobs(
 
     allpaths = list(input_folder.rglob("*"))
 
-    for i, conf in enumerate(config):
+    for i, conf in enumerate(config["data_types"]):
         logger.info(f"Finding jobs for {conf['original_path_template']}")
 
         inp_template = conf["original_path_template"]
@@ -530,7 +532,7 @@ def process_video_job(job: dict):
 def pack_dataset(
     input_folder: Path,
     output_folder: Path,
-    config: list[dict],
+    config: dict,
     paralell_mode: Literal["multiprocess", "slurm", "none"],
     slurm_args: list[str],
     n_jobs: int,
@@ -548,13 +550,13 @@ def pack_dataset(
         extra_kwargs
     )
 
-    for i in range(len(config)):
-        if config[i].get("quantize_method", "NONE") not in ["NONE", "CHECKBOUNDS"]:
-            config[i]["quantizeprecision"] = _calculate_config_precision(
-                method=QuantizeMethod.from_str(config[i]["quantize_method"]),
-                low=float(config[i]["min_orig_val"]),
-                high=float(config[i]["max_orig_val"]),
-                dtype=config[i]["pack_dtype"],
+    for i, dc in enumerate(config["data_types"]):
+        if dc.get("quantize_method", "NONE") not in ["NONE", "CHECKBOUNDS"]:
+            dc["quantizeprecision"] = _calculate_config_precision(
+                method=QuantizeMethod.from_str(dc["quantize_method"]),
+                low=float(dc["min_orig_val"]),
+                high=float(dc["max_orig_val"]),
+                dtype=dc["pack_dtype"],
             )
 
     match paralell_mode:
@@ -649,11 +651,17 @@ def parse_args():
 
     return validate_args(parser.parse_args())
 
+def format_for_json(obj):
+    if isinstance(obj, Path):
+        return str(obj)
+    return obj
 
 def main():
-    args = parse_args()
 
+    args = parse_args()
     logging.basicConfig(level=args.log_level)
+
+    start = time.time()
 
     match args.action, args.level, args.input.suffix, args.output.suffix:
         case "pack", "frameset", _, ".png":
@@ -715,18 +723,20 @@ def main():
                 args.tmp_folder,
                 args.subset,
             )
-
-            with (args.output / "cvdpack.json").open("w") as f:
-                json.dump(config, f, indent=2)
         case _:
             raise ValueError(
                 f"Invalid {args.action=} {args.level=} {args.input.suffix=} {args.output.suffix=}"
             )
+        
+    if args.config is None:
+        return
+    
 
-    if args.level == "frameset" and args.config is not None:
-        with args.config.open("r") as f:
-            config = json.load(f)
-        config.append(
+    with args.config.open("r") as f:
+        config = json.load(f)
+
+    if args.level == "frameset":
+        config["data_types"].append(
             {
                 "original": args.input,
                 "packed": args.output,
@@ -737,9 +747,21 @@ def main():
                 "pack_dtype": args.to_dtype,
             }
         )
-        with args.config.open("w") as f:
-            json.dump(config, f, indent=2)
+    elif args.level == "dataset":
+        config["metadata"]["original_folder"] = str(args.input)
+        config["metadata"]["packed_folder"] = str(args.output)
 
+    config["metadata"]["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    config["metadata"]["cvdpack_version"] = __version__
+    config["metadata"]["args"] = vars(args)
+    config["metadata"]["pack_runtime"] = time.time() - start
+
+    if args.level == "dataset":
+        with (args.output / "cvdpack.json").open("w") as f:
+            json.dump(config, f, indent=2, default=format_for_json)
+    elif args.config is not None and not str(args.config).startswith("presets/"):
+        with args.config.open("w") as f:
+            json.dump(config, f, indent=2, default=format_for_json)
 
 if __name__ == "__main__":
     main()

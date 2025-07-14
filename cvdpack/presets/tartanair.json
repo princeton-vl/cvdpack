@@ -1,52 +1,56 @@
-[
-    {
-        "original_path_template": "{scene}/{split}/{vid}/image_{cam}/{frame:06d}.png",
-        "packed_path_template": "{scene}/{split}/{vid}/image_{cam}.mkv",
-        "pack_dtype": "uint8",
-        "min_orig_val": 0,
-        "max_orig_val": 255,
-        "quantize_method": "CHECKBOUNDS",
-        "out_of_bounds_method": "error"
-    },
-    {
-        "original_path_template": "{scene}/{split}/{vid}/depth_{cam}/{frame:06d}_{cam}_depth.npy",
-        "packed_path_template": "{scene}/{split}/{vid}/depth_{cam}.mkv",
-        "min_orig_val": 0.5,
-        "max_orig_val": 1000,
-        "pack_dtype": "uint16",
-        "quantize_method": "INV",
-        "out_of_bounds_method": "nan"
-    },
-    {
-        "original_path_template": "{scene}/{split}/{vid}/flow/{frame:06d}_{framenext:06d}_flow.npy",
-        "packed_path_template": "{scene}/{split}/{vid}/flow.mkv",
-        "min_orig_val": -512,
-        "max_orig_val": 512,
-        "pack_dtype": "uint16",
-        "quantize_method": "SYMSQRT",
-        "out_of_bounds_method": "nan_warn"
-    },    
-    {
-        "original_path_template": "{scene}/{split}/{vid}/flow/{frame:06d}_{framenext:06d}_mask.npy",
-        "packed_path_template": "{scene}/{split}/{vid}/flow_mask.mkv",
-        "min_orig_val": 0,
-        "max_orig_val": 255,
-        "pack_dtype": "uint8",
-        "quantize_method": "CHECKBOUNDS",
-        "out_of_bounds_method": "error"
-    },
-    {
-        "original_path_template": "{scene}/{split}/{vid}/seg_{cam}/{frame:06d}_{cam}_seg.npy",
-        "packed_path_template": "{scene}/{split}/{vid}/seg_{cam}.mkv",
-        "min_orig_val": 0,
-        "max_orig_val": 255,
-        "pack_dtype": "uint8",
-        "quantize_method": "CHECKBOUNDS",
-        "out_of_bounds_method": "error"
-    },
-    {
-        "original_path_template": "{scene}/{split}/{vid}/pose_{cam}.txt",
-        "packed_path_template": "{scene}/{split}/{vid}/pose_{cam}.npy",
-        "pack_dtype": "float32"
-    }
-]
+{
+    "metadata": {},
+    "data_types": [
+        {
+            "original_path_template": "{scene}/{split}/{vid}/image_{cam}/{frame:06d}.png",
+            "packed_path_template": "{scene}/{split}/{vid}/image_{cam}.mkv",
+            "pack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{scene}/{split}/{vid}/depth_{cam}/{frame:06d}_{cam}_depth.npy",
+            "packed_path_template": "{scene}/{split}/{vid}/depth_{cam}.mkv",
+            "min_orig_val": 0.5,
+            "max_orig_val": 1000,
+            "pack_dtype": "uint16",
+            "quantize_method": "INV",
+            "out_of_bounds_method": "nan"
+        },
+        {
+            "original_path_template": "{scene}/{split}/{vid}/flow/{frame:06d}_{framenext:06d}_flow.npy",
+            "packed_path_template": "{scene}/{split}/{vid}/flow.mkv",
+            "min_orig_val": -512,
+            "max_orig_val": 512,
+            "pack_dtype": "uint16",
+            "quantize_method": "SYMSQRT",
+            "out_of_bounds_method": "nan_warn"
+        },    
+        {
+            "original_path_template": "{scene}/{split}/{vid}/flow/{frame:06d}_{framenext:06d}_mask.npy",
+            "packed_path_template": "{scene}/{split}/{vid}/flow_mask.mkv",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{scene}/{split}/{vid}/seg_{cam}/{frame:06d}_{cam}_seg.npy",
+            "packed_path_template": "{scene}/{split}/{vid}/seg_{cam}.mkv",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        {
+            "original_path_template": "{scene}/{split}/{vid}/pose_{cam}.txt",
+            "packed_path_template": "{scene}/{split}/{vid}/pose_{cam}.npy",
+            "pack_dtype": "float32"
+        }
+    ]
+}
+
