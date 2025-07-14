@@ -44,6 +44,13 @@ screen python -m cvdpack.main pack dataset --input /n/fs/circuitnn/datasets/Tart
 screen python -m cvdpack.main unpack dataset --input /n/fs/scratch/$USER/TartanAir_packed --output /n/fs/scratch/$USER/TartanAir_unpacked --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_jobs 100 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
+Pack tartanair locally
+```bash
+python -m cvdpack.main pack dataset --input TartanAir/ --output TartanAir_packed/ --config presets/tartanair.json --tmp_folder tmp/ --parallel_mode multiprocess --n_jobs 10
+
+python -m cvdpack.main unpack dataset --input TartanAir_packed --output TartanAir_unpacked
+```
+
 TartanAir, step by step
 ```bash
 

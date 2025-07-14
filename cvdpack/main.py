@@ -17,6 +17,7 @@ import numpy as np
 from cvdpack import __version__
 import time
 from tqdm import tqdm
+
 try:
     import submitit
 except ImportError:
@@ -95,7 +96,6 @@ PROPS_TO_ENCODER_PIXFMT = {
 
 
 def load_any_image(path, allow_pickle=False):
-
     match path.suffix:
         case ".png":
             return cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
@@ -188,7 +188,6 @@ def quantize_frame(
     img = load_any_image(input_img_path)
 
     from_dtype = img.dtype
-    
 
     to_dtype = DTYPE_MAP[to_dtype]
     assert np.issubdtype(to_dtype, np.integer)
@@ -213,10 +212,14 @@ def quantize_frame(
                 raise ValueError(msg)
 
     if quantize_method == QuantizeMethod.CHECKBOUNDS:
-        assert np.issubdtype(from_dtype, np.integer), f"{input_img_path=} had {from_dtype=}"
+        assert np.issubdtype(from_dtype, np.integer), (
+            f"{input_img_path=} had {from_dtype=}"
+        )
         img_quant = img.astype(to_dtype)
     else:
-        assert np.issubdtype(from_dtype, np.floating), f"{input_img_path=} had {from_dtype=}"
+        assert np.issubdtype(from_dtype, np.floating), (
+            f"{input_img_path=} had {from_dtype=}"
+        )
         assert np.issubdtype(to_dtype, np.integer), f"{input_img_path=} had {to_dtype=}"
         img_norm = normalize_vals(img, min_orig_val, max_orig_val, quantize_method)
         intmax = np.iinfo(
@@ -261,6 +264,10 @@ def unpack_video(
     output_frames_path_template: Path,
     ffmpeg: str = "ffmpeg",
 ):
+    logger.info(
+        f"{unpack_video.__name__} {input_video_path=} to {output_frames_path_template=}"
+    )
+
     output_path_ffmpeg = _curlyframe_to_ffmpeg_frametemplate(
         output_frames_path_template
     )
@@ -277,9 +284,9 @@ def pack_video(
     output_video_path: Path,
     ffmpeg: str = "ffmpeg",
 ):
-    matched = next(
-        match_template_paths(input_frames_path.parent, input_frames_path.name), None
-    )
+    logger.info(f"{pack_video.__name__} {input_frames_path=} to {output_video_path=}")
+
+    matched = next(match_template_paths(input_frames_path), None)
     if matched is None:
         raise ValueError(f"No frames found in {input_frames_path=}")
     first = load_any_image(matched[1])
@@ -299,10 +306,10 @@ def pack_video(
 
 def match_template_paths(
     template: Path,
+    match_video_folder: bool = False,
 ):
-
     parts = template.parts
-    first_curlypart = next(i for i, p in enumerate(parts) if "{" in p)
+    first_curlypart = next((i for i, p in enumerate(parts) if "{" in p), None)
     child_template = "/".join(parts[first_curlypart:])
     search_folder = Path("/".join(parts[:first_curlypart]))
 
@@ -326,8 +333,8 @@ def match_template_paths(
 
     def match_to_dict(m: re.Match):
         return {k: int(v) if v.isdigit() else v for k, v in m.groupdict().items()}
-    
-    glob_pattern = re.sub(r'\{[^}]*\}', '*', child_template)
+
+    glob_pattern = re.sub(r"\{[^}]*\}", "*", child_template)
 
     iter = tqdm(search_folder.rglob(glob_pattern), desc=f"Finding {template=}")
     for p in sorted(list(iter)):
@@ -346,9 +353,13 @@ def pack_frameset(
     max_orig_val: float,
     out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
 ):
-    all_files = match_template_paths(input_path_template)
-    all_files = list(all_files)
-    logger.info(f"Found {len(all_files)} frames in {input_path_template=}")
+    logger.info(
+        f"{pack_frameset.__name__} {input_path_template=} to {output_path_template=}"
+    )
+
+    all_files = list(match_template_paths(input_path_template))
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
 
     for frame_info, frame_input_path in all_files:
         output_path = format_template(output_path_template, frame_info)
@@ -407,51 +418,53 @@ def unpack_frameset(
         f"Output path must contain a template: {output_path_template=}"
     )
     all_files = match_template_paths(input_path_template)
-    logger.info(f"Found {len(all_files)} frames in {input_path_template=}")
 
     for frame_info, frame_input_path in all_files:
-
         unquantize_frame(
             frame_input_path,
             output_img_path=format_template(output_path_template, frame_info),
             to_dtype=to_dtype,
             quantize_method=quantize_method,
             min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val, 
+            max_orig_val=max_orig_val,
         )
 
+
 def format_template(template: Path, vals: dict):
-    
     def replace_func(match):
         full_spec = match.group(1)
-        key = full_spec.split(':')[0]
+        key = full_spec.split(":")[0]
         if key in vals:
             return ("{" + full_spec + "}").format(**{key: vals[key]})
         return match.group(0)
 
-    res = re.sub(r'\{([^}]+)\}', replace_func, str(template))
+    res = re.sub(r"\{([^}]+)\}", replace_func, str(template))
 
     if isinstance(template, Path):
         return Path(res)
     return res
 
-def find_video_jobs(
+
+def find_jobs(
     input_template: Path,
     output_template: Path,
     subset: dict,
     extra_job_args: dict,
-    lazy: bool,
+    match_video_folder: bool = False,
+    lazy: bool = False,
 ):
+    if match_video_folder and "{frame" in input_template.parts[-1]:
+        search_template = input_template.parent
+        input_template_extra = input_template.parts[-1]
+    else:
+        search_template = input_template
+        input_template_extra = None
 
-    if "{frame" in input_template.parts[-1]:
-        input_template = input_template.parent
-    paths = match_template_paths(input_template)
+    paths = match_template_paths(search_template)
 
     skipped_for_lazy = 0
-
     jobs = []
     for vid_info, vid_input_path in paths:
-
         if subset and not all(
             k not in vid_info or vid_info[k] == v for k, v in subset.items()
         ):
@@ -462,6 +475,9 @@ def find_video_jobs(
             skipped_for_lazy += 1
             continue
 
+        if input_template_extra:
+            vid_input_path = vid_input_path / input_template_extra
+
         jobs.append(
             {
                 "input_path": vid_input_path,
@@ -469,15 +485,16 @@ def find_video_jobs(
                 **extra_job_args,
             }
         )
-    
+
     if len(jobs) == 0 and skipped_for_lazy == 0:
         raise ValueError(f"No jobs found for {input_template}")
-    msg = f"Found {len(jobs)} jobs for {input_template}"
+    msg = f"Found {len(jobs)} jobs for {input_template} -> {output_template}"
     if skipped_for_lazy > 0:
         msg += f", skipped {skipped_for_lazy} due to --lazy flag"
     logger.info(msg)
 
     return jobs
+
 
 def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
     if k_equals_v_strs is None:
@@ -496,14 +513,12 @@ def _calculate_config_precision(method, low, high, dtype):
     pass
 
 
-def process_video_job(
-    job: dict
-):
+def process_video_job(job: dict):
     tmp_folder = job["tmp_folder"]
     tmp_folder.mkdir(parents=True, exist_ok=True)
 
     input_path = Path(job["input_path"])
-    output_path = format_template(job["output_template"], job["input_path_keys"])
+    output_path = Path(job["output_path"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     tmp_path = tmp_folder / f"{hash(input_path)}_{hash(output_path)}"
@@ -520,7 +535,9 @@ def process_video_job(
                 input_path,
                 tmp_template,
                 to_dtype=job["config"]["pack_dtype"],
-                quantize_method=QuantizeMethod.from_str(job["config"]["quantize_method"]),
+                quantize_method=QuantizeMethod.from_str(
+                    job["config"]["quantize_method"]
+                ),
                 min_orig_val=float(job["config"]["min_orig_val"]),
                 max_orig_val=float(job["config"]["max_orig_val"]),
                 out_of_bounds_method=job["config"]["out_of_bounds_method"],
@@ -529,12 +546,14 @@ def process_video_job(
         case ".mkv", ".png":
             unpack_video(input_path, output_path)
         case ".mkv", _:
-            unpack_video(input_path, tmp_path/"{frame:06d}.png")
+            unpack_video(input_path, tmp_path / "{frame:06d}.png")
             unpack_frameset(
-                tmp_path, 
-                output_path, 
+                tmp_path,
+                output_path,
                 to_dtype=job["config"]["unpack_dtype"],
-                quantize_method=QuantizeMethod.from_str(job["config"]["quantize_method"]),
+                quantize_method=QuantizeMethod.from_str(
+                    job["config"]["quantize_method"]
+                ),
                 min_orig_val=float(job["config"]["min_orig_val"]),
                 max_orig_val=float(job["config"]["max_orig_val"]),
             )
@@ -551,6 +570,7 @@ def process_video_job(
 
     shutil.rmtree(tmp_path)
 
+
 def wait_jobs(launched_jobs, n_already_finished, n_total):
     """Wait for a list of submitted jobs to complete, checking periodically."""
     finished_jobs = set()
@@ -564,20 +584,24 @@ def wait_jobs(launched_jobs, n_already_finished, n_total):
             progress = f"{n_already_finished + len(finished_jobs)}/{n_total}"
             try:
                 result = j.result()
-                logger.info(f"Job {j.job_id} completed successfully with {result=}. Progress: {progress}")
+                logger.info(
+                    f"Job {j.job_id} completed successfully with {result=}. Progress: {progress}"
+                )
             except Exception as e:
-                logger.error(f"Job {j.job_id} failed with error: {e}. Progress: {progress}")
+                logger.error(
+                    f"Job {j.job_id} failed with error: {e}. Progress: {progress}"
+                )
             finished_jobs.add(j.job_id)
-        
+
         time.sleep(1)
 
 
 def execute_jobs(
     log_folder: Path,
-    func: Callable, 
-    jobs: list[dict], 
-    paralell_mode: Literal["multiprocess", "slurm", "none"], 
-    n_jobs: int, 
+    func: Callable,
+    jobs: list[dict],
+    paralell_mode: Literal["multiprocess", "slurm", "none"],
+    n_jobs: int,
     slurm_args: list[str],
     tmp_folder: Path,
 ):
@@ -606,12 +630,14 @@ def execute_jobs(
                 slurm_args = _parse_k_equals_v_strs(slurm_args)
                 executor.update_parameters(**slurm_args)
             for i in range(0, len(jobs), SLURM_ARRAY_MAX):
-                launched = executor.map_array(process_video_job, jobs[i:i+SLURM_ARRAY_MAX])
+                launched = executor.map_array(
+                    process_video_job, jobs[i : i + SLURM_ARRAY_MAX]
+                )
                 wait_jobs(launched, i, len(jobs))
         case _:
             for job in jobs:
                 process_video_job(job)
-    
+
 
 def pack_dataset(
     input_folder: Path,
@@ -624,9 +650,8 @@ def pack_dataset(
     subset: list[str],
     lazy: bool,
 ):
-
     if config_path is None:
-        config_path = input_folder/"cvdpack.json"
+        config_path = input_folder / "cvdpack.json"
     if not config_path.exists():
         raise ValueError(f"Could not find {config_path=}")
     with config_path.open("r") as f:
@@ -636,13 +661,16 @@ def pack_dataset(
 
     jobs = []
     for datatype_conf in config["data_types"]:
-        jobs.extend(find_video_jobs(
-            input_template=input_folder / datatype_conf["original_path_template"],
-            output_template=output_folder / datatype_conf["packed_path_template"],
-            subset=subset,
-            extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf},
-            lazy=lazy,
-        ))
+        jobs.extend(
+            find_jobs(
+                input_template=input_folder / datatype_conf["original_path_template"],
+                output_template=output_folder / datatype_conf["packed_path_template"],
+                subset=subset,
+                extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf},
+                lazy=lazy,
+                match_video_folder=True,
+            )
+        )
 
     for i, dc in enumerate(config["data_types"]):
         quantize_method = dc.get("quantize_method", "NONE")
@@ -665,6 +693,7 @@ def pack_dataset(
         tmp_folder=tmp_folder,
     )
 
+
 def unpack_dataset(
     input_folder: Path,
     output_folder: Path,
@@ -676,9 +705,8 @@ def unpack_dataset(
     tmp_folder: Path,
     lazy: bool,
 ):
-
     if config_path is None:
-        config_path = input_folder/"cvdpack.json"
+        config_path = input_folder / "cvdpack.json"
     if not config_path.exists():
         raise ValueError(f"Could not find {config_path=}")
     with config_path.open("r") as f:
@@ -688,13 +716,16 @@ def unpack_dataset(
 
     jobs = []
     for datatype_conf in config["data_types"]:
-        jobs.extend(find_video_jobs(
-            input_template=input_folder / datatype_conf["packed_path_template"],
-            output_template=output_folder / datatype_conf["original_path_template"],
-            subset=subset,
-            extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf},
-            lazy=lazy,
-        ))
+        jobs.extend(
+            find_jobs(
+                input_template=input_folder / datatype_conf["packed_path_template"],
+                output_template=output_folder / datatype_conf["original_path_template"],
+                subset=subset,
+                extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf},
+                lazy=lazy,
+                match_video_folder=True,
+            )
+        )
 
     execute_jobs(
         log_folder=output_folder / "logs",
@@ -720,11 +751,16 @@ def validate_args(args: argparse.Namespace):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "action", 
-        type=str, 
+        "action",
+        type=str,
         choices=[
-            "pack", "unpack", "check", "reorganize", "quantize", "unquantize",
-        ]
+            "pack",
+            "unpack",
+            "check",
+            "reorganize",
+            "quantize",
+            "unquantize",
+        ],
     )
     parser.add_argument("level", type=str, choices=["dataset", "scene", "frameset"])
     parser.add_argument("--input", type=Path, required=True)
@@ -785,13 +821,14 @@ def parse_args():
 
     return validate_args(parser.parse_args())
 
+
 def format_for_json(obj):
     if isinstance(obj, Path):
         return str(obj)
     return obj
 
-def main():
 
+def main():
     args = parse_args()
 
     start = time.time()
@@ -831,7 +868,6 @@ def main():
                 args.output,
             )
         case "pack", "dataset", _, _:
-
             if not args.input.is_dir():
                 raise ValueError(f"Input must be a directory: {args.input=}")
 
@@ -868,10 +904,9 @@ def main():
             raise ValueError(
                 f"Invalid {args.action=} {args.level=} {args.input.suffix=} {args.output.suffix=}"
             )
-        
+
     if args.config is None:
         return
-    
 
     with args.config.open("r") as f:
         config = json.load(f)
@@ -903,6 +938,7 @@ def main():
     elif args.config is not None and not str(args.config).startswith("presets/"):
         with args.config.open("w") as f:
             json.dump(config, f, indent=2, default=format_for_json)
+
 
 if __name__ == "__main__":
     main()
