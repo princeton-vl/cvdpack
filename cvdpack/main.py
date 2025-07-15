@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+
+# Copyright (c) 2025, Princeton University
+# This code is licensed under the BSD-3-Clause license provided in the root directory of this project.
+#
+# Authors:
+# - Alexander Raistrick <araistrick@princeton.edu>
+
 import argparse
 import copy
 import json
