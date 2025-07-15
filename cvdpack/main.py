@@ -112,13 +112,12 @@ def save_any_image(
     img: np.ndarray,
     path: Path,
 ):
-    if img.ndim == 3 and img.shape[-1] != 3:
-        raise ValueError(
-            f"Unhandled {img.shape=} for {path=}, expected no channels (WxH) or 3 channels (WxHx3)"
-        )
-
     match path.suffix, img.dtype:
         case ((".png" | ".jpg" | ".jpeg"), np.uint8 | np.uint16):
+            if img.ndim == 3 and img.shape[-1] != 3:
+                raise ValueError(
+                    f"Unhandled {img.shape=} for {path=}, expected no channels (WxH) or 3 channels (WxHx3)"
+                )
             cv2.imwrite(str(path), img)
         case ".npy", _:
             np.save(path, img)
@@ -158,25 +157,26 @@ def normalize_vals(
 
 
 def img_quant_to_orig(
-    img: np.ndarray,
+    img_quant: np.ndarray,
     min_orig_val: float,
     max_orig_val: float,
     to_dtype: np.dtype,
     quantize_method: QuantizeMethod,
     unpack_channels_last: int | None = None,
 ) -> np.ndarray:
-    assert np.issubdtype(img.dtype, np.unsignedinteger), f"{img.dtype=}"
-    from_max = np.iinfo(img.dtype).max - 1  # exact maxint val is used for nan
+    assert np.issubdtype(img_quant.dtype, np.unsignedinteger), f"{img_quant.dtype=}"
+    imax = np.iinfo(img_quant.dtype).max
+    quant_max = imax - 1  # exact maxint val is used for nan
 
     match quantize_method:
         case QuantizeMethod.CHECKBOUNDS:
-            img = img.astype(to_dtype)
+            img = img_quant.astype(to_dtype)
         case QuantizeMethod.LINEAR:
-            img_norm = img.astype(np.float64) / from_max
+            img_norm = img_quant.astype(np.float64) / quant_max
             img_orig = img_norm * (max_orig_val - min_orig_val) + min_orig_val
             img = img_orig.astype(to_dtype)
         case QuantizeMethod.INV:
-            img_norm = img.astype(np.float64) / from_max
+            img_norm = img_quant.astype(np.float64) / quant_max
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
             img_unmap = img_norm * (max_norm - min_norm) + min_norm
@@ -184,6 +184,9 @@ def img_quant_to_orig(
             img = img_orig.astype(to_dtype)
         case _:
             raise ValueError(f"Invalid {quantize_method=}")
+
+    if quantize_method != QuantizeMethod.CHECKBOUNDS:
+        img[img_quant == imax] = np.nan
 
     if unpack_channels_last is not None:
         # needed for cases like flow, which can be 2 channel, but will have been promoted to a 3 channel png/mkv
@@ -454,40 +457,6 @@ def pack_frameset(
         save_any_image(img_quant, output_path)
 
 
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-):
-    assert input_img_path.suffix == ".png"
-    img = load_any_image(input_img_path)
-
-    assert np.issubdtype(img.dtype, np.integer), f"{input_img_path=} had {img.dtype=}"
-
-    img_unquant = img_quant_to_orig(
-        img,
-        min_orig_val,
-        max_orig_val,
-        to_dtype=to_dtype,
-        quantize_method=quantize_method,
-        unpack_channels_last=unpack_channels_last,
-    )
-
-    if quantize_method != QuantizeMethod.CHECKBOUNDS:
-        isnan = img == np.iinfo(img.dtype).max
-        img_unquant[isnan] = np.nan
-
-    logger.debug(
-        f"Unquantizing {input_img_path=} to {output_img_path=}, {img_unquant.min()=:.2f}, {img_unquant.max()=:.2f}"
-    )
-
-    save_any_image(img_unquant, output_img_path)
-
-
 def unpack_frameset(
     input_path_template: Path,
     output_path_template: Path,
@@ -506,16 +475,28 @@ def unpack_frameset(
     output_path_template.parent.mkdir(parents=True, exist_ok=True)
     all_files = match_template_paths(input_path_template)
 
-    for frame_info, frame_input_path in all_files:
-        unquantize_frame(
-            frame_input_path,
-            output_img_path=format_template(output_path_template, frame_info),
+    for frame_info, input_img_path in all_files:
+        assert input_img_path.suffix == ".png"
+        img = load_any_image(input_img_path)
+
+        assert np.issubdtype(img.dtype, np.integer), (
+            f"{input_img_path=} had {img.dtype=}"
+        )
+
+        img_unquant = img_quant_to_orig(
+            img,
+            min_orig_val,
+            max_orig_val,
             to_dtype=to_dtype,
             quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
             unpack_channels_last=unpack_channels_last,
         )
+
+        output_img_path = format_template(output_path_template, frame_info)
+        logger.debug(
+            f"Unquantizing {input_img_path=} to {output_img_path=}, {img_unquant.min()=}, {img_unquant.max()=}"
+        )
+        save_any_image(img_unquant, output_img_path)
 
 
 def format_template(template: Path, vals: dict, allow_missing: list[str] | None = None):
