@@ -3,6 +3,7 @@ import copy
 import json
 import logging
 import multiprocessing
+import os
 import re
 import shutil
 import subprocess
@@ -46,8 +47,12 @@ DTYPE_MAP = {
 
 
 ENCODER_ARGS = {
-    "ffv1": "-c:v ffv1 -level 3 -g 1 -slices 4 -threads 4 -slicecrc 1",
-    "libx265": "-c:v libx265 -x265-params lossless=1 -preset slow",
+    "ffv1": os.environ.get(
+        "CVDPACK_FFV1_ARGS", "-c:v ffv1 -level 3 -g 1 -slices 4 -threads 4 -slicecrc 1"
+    ),
+    "libx265": os.environ.get(
+        "CVDPACK_LIBX265_ARGS", "-c:v libx265 -x265-params lossless=1 -preset slow"
+    ),
 }
 
 
@@ -130,12 +135,12 @@ def normalize_vals(
         case QuantizeMethod.LINEAR:
             img_norm = (img - min_orig_val) / (max_orig_val - min_orig_val)
             return img_norm
-        case QuantizeMethod.SYM_SQRT:
-            img_norm = sym_sqrt(img)
-            sqrt_min = sym_sqrt(min_orig_val)
-            sqrt_max = sym_sqrt(max_orig_val)
-            img_norm = (img_norm - sqrt_min) / (sqrt_max - sqrt_min)
-            return img_norm
+        # case QuantizeMethod.SYM_SQRT:
+        #    img_norm = sym_sqrt(img)
+        #    sqrt_min = sym_sqrt(min_orig_val)
+        #    sqrt_max = sym_sqrt(max_orig_val)
+        #    img_norm = (img_norm - sqrt_min) / (sqrt_max - sqrt_min)
+        #    return img_norm
         case QuantizeMethod.INV:
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
@@ -149,12 +154,11 @@ def img_quant_to_orig(
     img: np.ndarray,
     min_orig_val: float,
     max_orig_val: float,
-    from_dtype: np.dtype,
     to_dtype: np.dtype,
     quantize_method: QuantizeMethod,
     unpack_channels_last: int | None = None,
 ) -> np.ndarray:
-    
+    from_dtype = img.dtype
     assert np.issubdtype(from_dtype, np.unsignedinteger), f"{from_dtype=}"
     from_max = np.iinfo(from_dtype).max
 
@@ -163,26 +167,25 @@ def img_quant_to_orig(
             img = img.astype(to_dtype)
         case QuantizeMethod.LINEAR:
             img_norm = img.astype(np.float64) / from_max
-            img_orig = (img_norm * (max_orig_val - min_orig_val) + min_orig_val)
+            img_orig = img_norm * (max_orig_val - min_orig_val) + min_orig_val
             img = img_orig.astype(to_dtype)
         case QuantizeMethod.INV:
             img_norm = img.astype(np.float64) / from_max
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
-            img_unmap = (img_norm * (max_norm - min_norm) + min_norm)
+            img_unmap = img_norm * (max_norm - min_norm) + min_norm
             img_orig = 1 / img_unmap
             img = img_orig.astype(to_dtype)
         case _:
             raise ValueError(f"Invalid {quantize_method=}")
-        
+
     if unpack_channels_last is not None:
         # needed for cases like flow, which can be 2 channel, but will have been promoted to a 3 channel png/mkv
         assert img.ndim == 3, f"{img.ndim=}"
         assert img.shape[-1] >= unpack_channels_last, f"{img.shape=}"
         img = img[..., :unpack_channels_last]
-    
-    return img
 
+    return img
 
 
 def img_orig_to_quant(
@@ -281,15 +284,15 @@ def unpack_video(
     )
 
     ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
-    
-    if loglevel != logging.DEBUG :
+
+    if loglevel != logging.DEBUG:
         ffmpeg_args.extend(["-loglevel", "error"])
-    
+
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
-    
+
     ffmpeg_args.extend(["-i", str(input_video_path), output_path_ffmpeg])
-    
+
     command = " ".join(ffmpeg_args)
     logger.info(
         f"Unpacking {input_video_path=} to {output_frames_path_template=}, {command=}"
@@ -301,6 +304,8 @@ def unpack_video(
             info["framenext"] = info["frame"] + 1
             next_path = format_template(output_frames_path_template, info)
             shutil.move(path, next_path)
+
+    return command
 
 
 def pack_video(
@@ -326,24 +331,26 @@ def pack_video(
     input_frames_ffmpeg = _curlyframe_to_ffmpeg_frametemplate(
         input_frames_path, as_glob=True
     )
-    
+
     ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
-    
+
     if loglevel != logging.DEBUG:
         ffmpeg_args.extend(["-loglevel", "error"])
         if encoder == "libx265":
             encoder_args += " -x265-params log-level=quiet"
-    
+
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
-    
+
     ffmpeg_args.extend(["-pattern_type", "glob", "-i", input_frames_ffmpeg])
     ffmpeg_args.extend(encoder_args.split())
     ffmpeg_args.extend(["-pix_fmt", pix_fmt, "-an", str(output_video_path)])
-    
+
     command = " ".join(ffmpeg_args)
     logger.info(f"Packing {input_frames_path=} to {output_video_path=}, {command=}")
     subprocess.check_output(ffmpeg_args)
+
+    return command
 
 
 def match_template_paths(
@@ -359,7 +366,6 @@ def match_template_paths(
 
     parts = []
     for lit, field, conv, _ in fmt.parse(child_template):
-    
         if "*" in lit:
             lit_parts = lit.split("*")
             for i, part in enumerate(lit_parts):
@@ -389,7 +395,9 @@ def match_template_paths(
     glob_pattern = re.sub(r"\{[^}]*\}", "*", child_template)
 
     files = sorted(list(search_folder.rglob(glob_pattern)))
-    logger.debug(f"{search_folder=} had {len(files)} files matching {glob_pattern=}, testing against {regex=}")
+    logger.debug(
+        f"{search_folder=} had {len(files)} files matching {glob_pattern=}, testing against {regex=}"
+    )
     for p in files:
         teststr = str(p.relative_to(search_folder))
         m = regex.match(teststr)
@@ -406,7 +414,6 @@ def pack_frameset(
     max_orig_val: float,
     out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
 ):
-
     logger.debug(
         f"{pack_frameset.__name__} {input_path_template=} to {output_path_template=}"
     )
@@ -430,6 +437,7 @@ def pack_frameset(
             out_of_bounds_method=out_of_bounds_method,
         )
         save_any_image(img_quant, output_path)
+
 
 def unquantize_frame(
     input_img_path: Path,
@@ -503,10 +511,14 @@ def format_template(template: Path, vals: dict, allow_missing: list[str] | None 
             try:
                 return ("{" + full_spec + "}").format(**{key: vals[key]})
             except ValueError as e:
-                raise ValueError(f"Invalid {full_spec=} for {key=} {vals[key]=} in {template=}, {e=}") from e
+                raise ValueError(
+                    f"Invalid {full_spec=} for {key=} {vals[key]=} in {template=}, {e=}"
+                ) from e
         elif allow_missing and key not in allow_missing:
-            raise ValueError(f"Missing {key=} in {vals=} for {template=}, {allow_missing=}")
-        
+            raise ValueError(
+                f"Missing {key=} in {vals=} for {template=}, {allow_missing=}"
+            )
+
         return match.group(0)
 
     res = re.sub(r"\{([^}]+)\}", replace_func, str(template))
@@ -533,18 +545,19 @@ def find_jobs(
     else:
         search_template = input_template
         input_template_extra = None
-        
+
     paths = match_template_paths(search_template)
 
     skipped_for_lazy = 0
+    skipped_for_subset = 0
     jobs = []
     for vid_info, vid_input_path in paths:
-
         vid_info["gt_type"] = gt_type
 
         if subset is not None and not all(
             k not in vid_info or vid_info[k] == v for k, v in subset.items()
         ):
+            skipped_for_subset += 1
             continue
 
         output_path = format_template(output_template, vid_info, allow_missing=[])
@@ -564,18 +577,19 @@ def find_jobs(
             }
         )
 
-    if len(jobs) == 0 and skipped_for_lazy == 0:
+    if len(jobs) == 0 and skipped_for_lazy == 0 and skipped_for_subset == 0:
         raise ValueError(f"No jobs found for {input_template}")
     msg = f"Found {len(jobs)} jobs for {input_template} -> {output_template}"
     if skipped_for_lazy > 0:
         msg += f", skipped {skipped_for_lazy} due to --lazy flag"
+    if skipped_for_subset > 0:
+        msg += f", skipped {skipped_for_subset} due to --subset flag"
     logger.info(msg)
 
     return jobs
 
 
 def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
-
     if k_equals_v_strs is None:
         return None
 
@@ -597,13 +611,12 @@ def _calculate_config_precision(method, low, high, dtype):
 
 
 def process_video_job(job: dict):
-
     input_path = Path(job["input_path"])
     output_path = Path(job["output_path"])
 
     tmp_path = None
 
-    def make_tmp_folder():
+    def make_tmp_folder(exists_ok: bool = False):
         tmp_folder = job["tmp_folder"]
         out_str = str(output_path)
         out_str = (
@@ -616,13 +629,27 @@ def process_video_job(job: dict):
 
         nonlocal tmp_path
         tmp_path = tmp_folder / out_str
-        tmp_path.mkdir(parents=True, exist_ok=False)
+
+        logger.debug(
+            f"Making {tmp_path=} for {input_path=} -> {output_path=}, {tmp_path.exists()=}"
+        )
+
+        tmp_path.mkdir(parents=True, exist_ok=exists_ok)
+        return tmp_path
 
     logger.info(f"Processing {input_path} -> {output_path}")
 
+    metadata_commands = []
+
     match input_path.suffix, output_path.suffix:
         case ".png", ".mkv":
-            pack_video(input_path, output_path, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
+            command = pack_video(
+                input_path,
+                output_path,
+                n_cpus=job.get("cpus_per_worker"),
+                loglevel=job.get("loglevel"),
+            )
+            metadata_commands.append(command)
         case _, ".mkv":
             tmp_template = make_tmp_folder() / "{frame:06d}.png"
             pack_frameset(
@@ -636,10 +663,22 @@ def process_video_job(job: dict):
                 max_orig_val=float(job["config"]["max_orig_val"]),
                 out_of_bounds_method=job["config"]["out_of_bounds_method"],
             )
-            pack_video(tmp_template, output_path, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
+            command = pack_video(
+                tmp_template,
+                output_path,
+                n_cpus=job.get("cpus_per_worker"),
+                loglevel=job.get("loglevel"),
+            )
+            metadata_commands.append(command)
         case ".mkv", ".png":
-            unpack_video(input_path, output_path, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
-        case '.png' | '.jpg' | '.jpeg' | '.npy', ".png":
+            command = unpack_video(
+                input_path,
+                output_path,
+                n_cpus=job.get("cpus_per_worker"),
+                loglevel=job.get("loglevel"),
+            )
+            metadata_commands.append(command)
+        case ".png" | ".jpg" | ".jpeg" | ".npy", ".png":
             pack_frameset(
                 input_path,
                 output_path,
@@ -665,7 +704,12 @@ def process_video_job(job: dict):
             )
         case ".mkv", _:
             tmp_frames = make_tmp_folder() / "{frame:06d}.png"
-            unpack_video(input_path, tmp_frames, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
+            command = unpack_video(
+                input_path,
+                tmp_frames,
+                n_cpus=job.get("cpus_per_worker"),
+                loglevel=job.get("loglevel"),
+            )
             unpack_frameset(
                 tmp_frames,
                 output_path,
@@ -677,6 +721,7 @@ def process_video_job(job: dict):
                 max_orig_val=float(job["config"]["max_orig_val"]),
                 unpack_channels_last=job["config"].get("unpack_channels_last", None),
             )
+            metadata_commands.append(command)
         case ".txt", ".npy":
             data = np.loadtxt(input_path)
             assert "{" not in str(output_path), output_path
@@ -694,6 +739,10 @@ def process_video_job(job: dict):
 
     if tmp_path is not None:
         shutil.rmtree(tmp_path)
+
+    return {
+        "commands": metadata_commands,
+    }
 
 
 def wait_jobs(launched_jobs, pbar):
@@ -765,9 +814,7 @@ def execute_jobs(
             pbar = tqdm(total=len(jobs), desc="Running jobs")
             crashed = []
             for i in range(0, len(jobs), SLURM_ARRAY_MAX):
-                launched = executor.map_array(
-                    func, jobs[i : i + SLURM_ARRAY_MAX]
-                )
+                launched = executor.map_array(func, jobs[i : i + SLURM_ARRAY_MAX])
                 crashed += wait_jobs(launched, pbar)
             if len(crashed) > 0:
                 raise ValueError(
@@ -776,6 +823,7 @@ def execute_jobs(
                 )
         case _:
             raise ValueError(f"Invalid {paralell_mode=}")
+
 
 def decide_dataset_job_templates(
     input_folder: Path,
@@ -804,7 +852,9 @@ def decide_dataset_job_templates(
     inp = default_src
     out = default_dest
 
-    logger.debug(f"{decide_dataset_job_templates.__name__} {default_src.suffix} -> {default_dest.suffix} {steps=} {mode=}")
+    logger.debug(
+        f"{decide_dataset_job_templates.__name__} {default_src.suffix} -> {default_dest.suffix} {steps=} {mode=}"
+    )
 
     if steps is None:
         logger.debug(f"No steps specified, using default {inp=} {out=}")
@@ -816,28 +866,34 @@ def decide_dataset_job_templates(
         if steps == ["quantize"]:
             # we are not actually going all the way to video, we are stopping at pngs
             out = default_src.with_suffix(".png")
-            logger.debug(f"Changed from {default_dest=} to {out=} due to {mode=} {steps=}")
+            logger.debug(
+                f"Changed from {default_dest=} to {out=} due to {mode=} {steps=}"
+            )
         elif steps == ["pack_video"]:
             # we are starting from already quantized pngs
             inp = default_src.with_suffix(".png")
-            logger.debug(f"Changed from {default_src=} to {inp=} due to {mode=} {steps=}")
+            logger.debug(
+                f"Changed from {default_src=} to {inp=} due to {mode=} {steps=}"
+            )
         else:
             raise ValueError(f"Unhandled {steps=} for {mode=} {default_dest=}")
     elif mode == "unpack" and default_src.suffix == ".mkv":
-        if steps == ["unquantize"]: 
+        if steps == ["unquantize"]:
             # we are not actually going all the way to video, we are stopping at pngs
             inp = default_dest.with_suffix(".png")
-            logger.debug(f"Changed from {default_src=} to {inp=} due to {mode=} {steps=}")
-        elif steps == ["unpack_video"]: 
+            logger.debug(
+                f"Changed from {default_src=} to {inp=} due to {mode=} {steps=}"
+            )
+        elif steps == ["unpack_video"]:
             # unpack the video, but stop before .npy, leave pngs instead
             if default_dest.suffix == ".npy":
                 out = default_dest.with_suffix(".png")
-                logger.debug(f"Changed from {default_dest=} to {out=} due to {mode=} {steps=}")
+                logger.debug(
+                    f"Changed from {default_dest=} to {out=} due to {mode=} {steps=}"
+                )
         else:
             raise ValueError(f"Unhandled {steps=} for {mode=} {default_src=}")
-    elif (
-        mode == "pack" and default_src.suffix == ".txt" and steps == ["pack_video"]
-    ):
+    elif mode == "pack" and default_src.suffix == ".txt" and steps == ["pack_video"]:
         inp = inp.with_suffix(default_dest.suffix)
         logger.debug(
             f"Changed from {default_src=} to {inp=} due to {mode=} {steps=}, "
@@ -852,7 +908,9 @@ def decide_dataset_job_templates(
             "unpacking from npy->txt happens in quantize/unquantize not video unpack"
         )
     else:
-        logger.debug(f"{decide_dataset_job_templates=} didnt match any cases, using {inp=} {out=}")
+        logger.debug(
+            f"{decide_dataset_job_templates=} didnt match any cases, using {inp=} {out=}"
+        )
 
     return input_folder / inp, output_folder / out
 
@@ -871,18 +929,25 @@ def pack_dataset(
     cpus_per_worker: int | None = None,
     loglevel: int = None,
 ):
+    if tmp_folder is not None and tmp_folder.exists():
+        raise ValueError(
+            f"--tmp_folder {tmp_folder} already exists, please use a different one or consider deleting it"
+        )
+
     if config is None:
         raise ValueError(
             "pack_dataset requires a config, must use --config "
             "or use an --input containing a cvdpack.json"
         )
 
-
     jobs = []
     for gt_type, datatype_conf in config["data_types"].items():
-
         input_template, output_template = decide_dataset_job_templates(
-            input_folder, output_folder, datatype_conf, steps, "pack",
+            input_folder,
+            output_folder,
+            datatype_conf,
+            steps,
+            "pack",
         )
 
         jobs.extend(
@@ -938,18 +1003,25 @@ def unpack_dataset(
     cpus_per_worker: int | None = None,
     loglevel: int = None,
 ):
-    
     if config is None:
         raise ValueError(
             "unpack_dataset requires a config, must use --config "
             "or use an --input containing a cvdpack.json"
         )
 
+    if tmp_folder is not None and tmp_folder.exists():
+        raise ValueError(
+            f"--tmp_folder {tmp_folder} already exists, please use a different one or consider deleting it"
+        )
+
     jobs = []
     for gt_type, datatype_conf in config["data_types"].items():
-
         search_input_template, search_output_template = decide_dataset_job_templates(
-            input_folder, output_folder, datatype_conf, steps, mode="unpack",
+            input_folder,
+            output_folder,
+            datatype_conf,
+            steps,
+            mode="unpack",
         )
 
         jobs.extend(
@@ -1024,11 +1096,11 @@ def parse_args():
     parser.add_argument("--output", type=Path, required=True)
 
     parser.add_argument(
-        "--steps", 
-        type=str, 
-        default=None, 
-        nargs="*", 
-        choices=["quantize", "pack_video", "unpack_video", "unquantize"]
+        "--steps",
+        type=str,
+        default=None,
+        nargs="*",
+        choices=["quantize", "pack_video", "unpack_video", "unquantize"],
     )
 
     # frames level configs - valid only for level=frameset
@@ -1068,7 +1140,10 @@ def parse_args():
         "--n_workers", type=int, default=None, help="Number of jobs to run in parallel."
     )
     parser.add_argument(
-        "--cpus_per_worker", type=int, default=None, help="Number of CPUs per worker for slurm and ffmpeg threads."
+        "--cpus_per_worker",
+        type=int,
+        default=None,
+        help="Number of CPUs per worker for slurm and ffmpeg threads.",
     )
     parser.add_argument(
         "--subset",
@@ -1086,22 +1161,33 @@ def parse_args():
 
     parser.add_argument("--overwrite", action="store_true", default=False)
     parser.add_argument(
-        '-d', '--debug',
+        "-d",
+        "--debug",
         help="Print lots of debugging statements",
-        action="store_const", dest="loglevel", const=logging.DEBUG,
+        action="store_const",
+        dest="loglevel",
+        const=logging.DEBUG,
         default=logging.WARNING,
     )
     parser.add_argument(
-        '-v', '--verbose',
+        "-v",
+        "--verbose",
         help="Be verbose",
-        action="store_const", dest="loglevel", const=logging.INFO,
+        action="store_const",
+        dest="loglevel",
+        const=logging.INFO,
+    )
+    parser.add_argument(
+        "--no-verify-version",
+        action="store_true",
+        help="Skip verifying our cvdpack version against the version from any input configs",
     )
 
     return validate_args(parser.parse_args())
 
 
 def reorganize_files(
-    input_template: Path, 
+    input_template: Path,
     output_template: Path,
     subset: dict,
     loglevel: int,
@@ -1110,32 +1196,33 @@ def reorganize_files(
 
     if subset is not None and len(subset) > 0:
         template_new = format_template(input_template, subset)
-        logger.info(f"Using subset {subset=} to filter input template {input_template=} to {template_new=}")
+        logger.info(
+            f"Using subset {subset=} to filter input template {input_template=} to {template_new=}"
+        )
         input_template = template_new
 
     input_files = list(match_template_paths(input_template))
     if len(input_files) == 0:
         raise ValueError(f"No files found matching template: {input_template=}")
-    
-    
+
     output_files = [
-        format_template(output_template, file_info)
-        for file_info, _ in input_files
+        format_template(output_template, file_info) for file_info, _ in input_files
     ]
     input_files = [f for _, f in input_files]
 
     uniq_inp = set(input_files)
     uniq_out = set(output_files)
     if len(uniq_inp) != len(uniq_out):
-        raise ValueError(f"Reorganize from {input_template=} to {output_template=} is not one-to-one, got {len(uniq_inp)=} {len(uniq_out)=}")
+        raise ValueError(
+            f"Reorganize from {input_template=} to {output_template=} is not one-to-one, got {len(uniq_inp)=} {len(uniq_out)=}"
+        )
 
     iter = zip(input_files, output_files)
     if loglevel <= logging.INFO:
         iter = tqdm(iter, total=len(input_files))
     for input_file_path, output_file_path in iter:
-
         output_file_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         logger.debug(f"Copying {input_file_path} -> {output_file_path}")
         shutil.copy(input_file_path, output_file_path)
 
@@ -1147,16 +1234,15 @@ def format_for_json(obj):
 
 
 def main():
-
     start_time = time.time()
 
     args = parse_args()
-    
+
     logging.basicConfig(
         level=args.loglevel,
-        format='[%(asctime)s] [%(levelname)s] %(message)s',
-        datefmt='%H:%M:%S',
-        handlers=[logging.StreamHandler()]
+        format="[%(asctime)s] [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=[logging.StreamHandler()],
     )
     logger.setLevel(args.loglevel)
 
@@ -1167,10 +1253,14 @@ def main():
     if config_path is not None:
         with config_path.open("r") as f:
             config = json.load(f)
+        config_version = config.get("metadata", {}).get("cvdpack_version")
+        if config_version is not None and not args.no_verify_version:
+            raise ValueError(
+                f"Config {config_path} was made for cvdpack version {config_version} which does not match installed cvdpack={__version__} "
+                "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
+            )
 
-    out_suffix = (
-        args.output.suffix if not args.output.is_dir() else None
-    )
+    out_suffix = args.output.suffix if not args.output.is_dir() else None
     match args.action, out_suffix:
         case "pack_frames", ".png":
             pack_frameset(
@@ -1207,7 +1297,9 @@ def main():
             )
         case "pack_dataset", _:
             if not args.input.is_dir():
-                raise ValueError(f"pack_dataset requires input to be a directory: {args.input=}")
+                raise ValueError(
+                    f"pack_dataset requires input to be a directory: {args.input=}"
+                )
             pack_dataset(
                 args.input,
                 args.output,
@@ -1224,7 +1316,9 @@ def main():
             )
         case "unpack_dataset", _:
             if not args.input.is_dir():
-                raise ValueError(f"unpack_dataset requires input to be a directory: {args.input=}")
+                raise ValueError(
+                    f"unpack_dataset requires input to be a directory: {args.input=}"
+                )
             unpack_dataset(
                 args.input,
                 args.output,
@@ -1241,8 +1335,8 @@ def main():
             )
         case "reorganize", _:
             reorganize_files(
-                args.input, 
-                args.output, 
+                args.input,
+                args.output,
                 subset=_parse_k_equals_v_strs(args.subset),
                 loglevel=args.loglevel,
             )
@@ -1280,7 +1374,10 @@ def main():
         with config_path.open("w") as f:
             json.dump(config, f, indent=2, default=format_for_json)
 
-    print(f"Completed {args.action} for result {args.output} in {time.time() - start_time:.2f}s")
+    print(
+        f"Completed {args.action} for result {args.output} in {time.time() - start_time:.2f}s"
+    )
+
 
 if __name__ == "__main__":
     main()
