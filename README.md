@@ -1,6 +1,6 @@
 # Computer Vision Data Packer (cvdpack)
 
-A tool to quantize and (optionally) video-compress your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos.
+A tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos.
 
 Reduce your dataset size by up to 90+%, with minimal changes in groundtruth accuracy!
 
@@ -8,10 +8,8 @@ Reduce your dataset size by up to 90+%, with minimal changes in groundtruth accu
 
 **Make a backup of your data, and doublecheck your experimental results are not changed by cvdpack**
 
-### Getting Started
 
-
-##### Installation
+## Installation
 
 Required: you must have `ffmpeg` installed and in your PATH. Currently I have not configured uv/pip to install this for you (TODO)
 
@@ -40,38 +38,53 @@ cd cvdpack
 pip install -e .
 ```
 
-##### Example Commands:
+## Example Commands:
 
-You may need to `mkdir data/` before running the commands below. 
-Use --verbose to see per-video output, or --debug to see per-frame. 
-All commands should be usable with `uvx cvdpack` instead of `python -m cvdpack`
+Please see `cvdpack --help` for all options!
 
-Pack a single tartanair scene locally. (Remove --subset to do the full thing)
+Note: we use TartanAir as an example dataset, but cvdpack is not specific to TartanAir.
+
+Commands will print very little output, unless they fail or you add -v or --debug
+
+### Pack/unpack tartanair scene locally. 
+Commands shown are for a single scene and video, remove --subset to do the full thing
 ```bash
-# pack - runtime ~31sec, size reduced from 8.2G to 1.2G
-python -m cvdpack.main pack_dataset --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair.json --tmp_folder tmp/ --n_workers 20 --subset scene=abandonedfactory
+python -m cvdpack.main pack_dataset --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair.json --tmp_folder tmp/ --n_workers 20 --subset scene=abandonedfactory vid=P000 -v
 
-# unpack - runtime ~28sec
-python -m cvdpack.main unpack_dataset --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 20 --tmp_folder tmp/ --subset scene=abandonedfactory
+python -m cvdpack.main unpack_dataset --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 20 --tmp_folder tmp/ --subset scene=abandonedfactory vid=P000 -v
 ```
+Runtimes are approx 31sec and 28sec respectively on a AMD EPYC 7713P 64-core machine.
 
-Pack/unpack all of TartanAir on a SLURM cluster (command shows works for princeton-vl's cluster; customize for your cluster)
+### Pack/unpack all of TartanAir on a SLURM cluster 
+Commands shown work for princeton-vl's cluster, you will need to customize the paths and slurm args for own cluster.
 ```bash
-# Pack the dataset - expected runtime ~
 screen python -m cvdpack.main pack_dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 
-# unpack: expected runtime ~
 screen python -m cvdpack.main unpack_dataset --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 100 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
 Partially pack/unpack tartanair (e.g just npys -> pngs, or just pngs -> mkvs, or mkvs -> pngs, or pngs -> npys). These can be run in sequence. 
 ```bash
-python -m cvdpack.main pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/ --config presets/tartanair.json --steps quantize --n_workers 20 --cpus_per_worker 4
+python -m cvdpack.main pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/  --steps quantize --n_workers 20 --cpus_per_worker 4 --config presets/tartanair.json
 python -m cvdpack.main pack_dataset --input data/TartanAir_partialpack/ --output data/TartanAir_pack/ --steps pack_video --n_workers 20 --cpus_per_worker 4
 python -m cvdpack.main unpack_dataset --input data/TartanAir_pack/ --output data/TartanAir_partialunpack/ --steps unpack_video --n_workers 20 --cpus_per_worker 4
 python -m cvdpack.main unpack_dataset --input data/TartanAir_partialunpack/ --output data/TartanAir_unpacked/ --steps unquantize --n_workers 20 --cpus_per_worker 4
 ```
-Runtimes are approx 34sec, TODO, TODO, TODO respectively on a AMD EPYC 7713P 64-core machine.
+For a single scene (abandonedfactory/Hard/P000):
+- Runtimes are approx 34sec, 58sec, 12sec, 23sec respectively on a AMD EPYC 7713P 64-core machine.
+- Result sizes are approx TODO, TODO, TODO, TODO respectively.
+
+### Reorganize or split a dataset
+
+Reorganize format
+```bash
+python -m cvdpack.main reorganize --input data/TartanAir/{scene}/{split}/{vid}/{gt_cam}/{frame:06d}_*.{ext} --output data/TartanAir_reorganized/{scene}/{split}_{vid}/{gt_cam}/{frame:04d}.{ext}
+```
+
+Reorganize and split
+```bash
+python -m cvdpack.main reorganize --input data/TartanAir/{scene}/{split}/{vid}/{gt_cam}/{frame:06d}_*.{ext} --output data/TartanAir_split/{scene}/{split}_{vid}/{gt_cam}/{frame:04d}.{ext} --subset scene=abandonedfactory split=Hard vid=P000,P001 gt_cam=depth_left,image_left
+```
 
 Pack individual videos in TartanAir, step by step
 ```bash
@@ -108,7 +121,10 @@ I have no particular intention to continue adding features to this project.
 
 However, potential ideas would include:
 - [ ] Allow scp-style prefixes to input and/or output path, in which case we read/write from remotes in a streaming fashion
-- [ ] Use gpu accelerated decoders?
+- [ ] Provide a default dataloader which handles any cvdpack.json
+    - [ ] Load from png version of the dataset
+    - [ ] Load from mkv version of the dataset ??
+- [ ] Use gpu accelerated video decoders?
 - [ ] Pack non-video framesets as compressed&chunked h5 (?) arrays
 - [ ] Store stereo datasets efficiently by storing only left-frame info + sparse rightframe info
 - [ ] Sbatch script which loads a dataset for you on job startup

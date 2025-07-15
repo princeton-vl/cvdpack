@@ -44,17 +44,6 @@ DTYPE_MAP = {
     "float64": np.float64,
 }
 
-VIDEO_SUFFIXES = [
-    "mkv",
-    "mp4",
-]
-
-FILETYPES = [
-    "png",
-    "jpg",
-    "npy",
-    "mkv",
-]
 
 ENCODER_ARGS = {
     "ffv1": "-c:v ffv1 -level 3 -g 1 -slices 4 -threads 4 -slicecrc 1",
@@ -77,7 +66,6 @@ class GtType(Enum):
 
 class QuantizeMethod(Enum):
     LINEAR = "linear"
-    SYM_SQRT = "symsqrt"
     INV = "inv"
     CHECKBOUNDS = "checkbounds"
 
@@ -178,7 +166,7 @@ def img_quant_to_orig(
             img_orig = (img_norm * (max_orig_val - min_orig_val) + min_orig_val)
             img = img_orig.astype(to_dtype)
         case QuantizeMethod.INV:
-def img_orig_to_quant(
+            img_norm = img.astype(np.float64) / from_max
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
             img_unmap = (img_norm * (max_norm - min_norm) + min_norm)
@@ -194,6 +182,9 @@ def img_orig_to_quant(
         img = img[..., :unpack_channels_last]
     
     return img
+
+
+
 def img_orig_to_quant(
     input_img_path: Path,
     output_img_path: Path,
@@ -246,7 +237,7 @@ def img_orig_to_quant(
         img_quant[oob_mask] = intmax
         img_quant[~oob_mask] = (img_norm[~oob_mask] * (intmax - 1)).astype(to_dtype) + 1
 
-    return img_quant
+    if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
             f"Quantizing {input_img_path=} to {output_img_path=}, {img.min()=:.2f}, {img.max()=:.2f}, {img_quant.min()=:.2f}, {img_quant.max()=:.2f}"
         )
@@ -291,7 +282,7 @@ def unpack_video(
 
     ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
     
-    if loglevel != logging.DEBUG and loglevel != logging.INFO:
+    if loglevel != logging.DEBUG :
         ffmpeg_args.extend(["-loglevel", "error"])
     
     if n_cpus is not None:
@@ -338,8 +329,10 @@ def pack_video(
     
     ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
     
-    if loglevel != logging.DEBUG and loglevel != logging.INFO:
+    if loglevel != logging.DEBUG:
         ffmpeg_args.extend(["-loglevel", "error"])
+        if encoder == "libx265":
+            encoder_args += " -x265-params log-level=quiet"
     
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
@@ -365,15 +358,25 @@ def match_template_paths(
     fmt = Formatter()
 
     parts = []
-    for lit, field, *_ in fmt.parse(child_template):
-        parts.append(re.escape(lit))
+    for lit, field, conv, _ in fmt.parse(child_template):
+    
+        if "*" in lit:
+            lit_parts = lit.split("*")
+            for i, part in enumerate(lit_parts):
+                if i > 0:
+                    parts.append(r"[^/\\]*")
+                parts.append(re.escape(part))
+        else:
+            parts.append(re.escape(lit))
+
         if not field:
             continue
-        if ":" in field:
-            field_name = field.split(":")[0]
-            parts.append(rf"(?P<{field_name}>\d+)")
+
+        if conv.endswith("d"):
+            parts.append(rf"(?P<{field}>\d+)")
         else:
             parts.append(rf"(?P<{field}>[^/\\]+)")
+
     regex = "^" + "".join(parts) + "$"
     try:
         regex = re.compile(regex)
@@ -385,8 +388,9 @@ def match_template_paths(
 
     glob_pattern = re.sub(r"\{[^}]*\}", "*", child_template)
 
-    logger.info(f"Searching {search_folder=} for {glob_pattern=}")
-    for p in sorted(list(search_folder.rglob(glob_pattern))):
+    files = sorted(list(search_folder.rglob(glob_pattern)))
+    logger.debug(f"{search_folder=} had {len(files)} files matching {glob_pattern=}, testing against {regex=}")
+    for p in files:
         teststr = str(p.relative_to(search_folder))
         m = regex.match(teststr)
         if m:
@@ -400,7 +404,7 @@ def pack_frameset(
     quantize_method: QuantizeMethod,
     min_orig_val: float,
     max_orig_val: float,
-        img_quant = img_orig_to_quant(
+    out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
 ):
 
     logger.debug(
@@ -417,58 +421,6 @@ def pack_frameset(
         output_path = format_template(output_path_template, frame_info)
 
         img_quant = img_orig_to_quant(
-    all_files = list(match_template_paths(input_path_template))
-    unpack_channels_last: int | None = None,
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    unpack_channels_last: int | None = None,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-    unpack_channels_last: int | None = None,
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
             frame_input_path,
             output_path,
             to_dtype,
@@ -487,344 +439,6 @@ def unquantize_frame(
     min_orig_val: float,
     max_orig_val: float,
     unpack_channels_last: int | None = None,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        unpack_channels_last=unpack_channels_last,
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-    unpack_channels_last: int | None = None,
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-    img_unquant = img_quant_to_orig(
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-        unpack_channels_last=unpack_channels_last,
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-    logger.debug(
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        unpack_channels_last=unpack_channels_last,
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-):
-    assert input_img_path.suffix == ".png"
-    img = load_any_image(input_img_path)
-
-                unpack_channels_last=job["config"].get("unpack_channels_last", None),
-    assert np.issubdtype(img.dtype, np.integer), f"{input_img_path=} had {img.dtype=}"
-
-    img_unquant = img_quant_to_orig(
-        img,
-        min_orig_val,
-        max_orig_val,
-        to_dtype=to_dtype,
-        quantize_method=quantize_method,
-        unpack_channels_last=unpack_channels_last,
-    )
-
-    if quantize_method != QuantizeMethod.CHECKBOUNDS:
-                unpack_channels_last=job["config"].get("unpack_channels_last", None),
-        isnan = img == np.iinfo(img.dtype).max
-        img_unquant[isnan] = np.nan
-
-    logger.debug(
-        f"Unquantizing {input_img_path=} to {output_img_path=}, {img_unquant.min()=:.2f}, {img_unquant.max()=:.2f}"
-    )
-
-    save_any_image(img_unquant, output_img_path)
-
-
-def unpack_frameset(
-    input_path_template: Path,
-    output_path_template: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        unpack_channels_last=unpack_channels_last,
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-    unpack_channels_last: int | None = None,
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-    img_unquant = img_quant_to_orig(
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-        unpack_channels_last=unpack_channels_last,
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-    logger.debug(
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        unpack_channels_last=unpack_channels_last,
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
 ):
     assert input_img_path.suffix == ".png"
     img = load_any_image(input_img_path)
@@ -858,200 +472,7 @@ def unpack_frameset(
     quantize_method: QuantizeMethod,
     min_orig_val: float,
     max_orig_val: float,
-            unpack_channels_last=unpack_channels_last,
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
     unpack_channels_last: int | None = None,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        unpack_channels_last=unpack_channels_last,
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-    unpack_channels_last: int | None = None,
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-    img_unquant = img_quant_to_orig(
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-        unpack_channels_last=unpack_channels_last,
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-    logger.debug(
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    unpack_channels_last: int | None = None,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-    img_unquant = img_quant_to_orig(
-        save_any_image(img_quant, output_path)
-    if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
-
-    for frame_info, frame_input_path in all_files:
-        unpack_channels_last=unpack_channels_last,
-        output_path = format_template(output_path_template, frame_info)
-
-        quantize_frame(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            quantize_method=quantize_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
-        save_any_image(img_quant, output_path)
-
-def unquantize_frame(
-    input_img_path: Path,
-    output_img_path: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
-):
-    assert input_img_path.suffix == ".png"
-    img = load_any_image(input_img_path)
-
-    assert np.issubdtype(img.dtype, np.integer), f"{input_img_path=} had {img.dtype=}"
-
-    img_unquant = img_quant_to_orig(
-        img,
-        min_orig_val,
-        max_orig_val,
-        to_dtype=to_dtype,
-        quantize_method=quantize_method,
-        unpack_channels_last=unpack_channels_last,
-    )
-
-    if quantize_method != QuantizeMethod.CHECKBOUNDS:
-        isnan = img == np.iinfo(img.dtype).max
-        img_unquant[isnan] = np.nan
-
-    logger.debug(
-        f"Unquantizing {input_img_path=} to {output_img_path=}, {img_unquant.min()=:.2f}, {img_unquant.max()=:.2f}"
-    )
-
-    save_any_image(img_unquant, output_img_path)
-
-
-def unpack_frameset(
-    input_path_template: Path,
-    output_path_template: Path,
-    to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
-    min_orig_val: float,
-    max_orig_val: float,
 ):
     assert "{" in input_path_template.name, (
         f"Input path must contain a template: {input_path_template=}"
@@ -1099,7 +520,7 @@ def find_jobs(
     input_template: Path,
     output_template: Path,
     gt_type: str,
-    subset: dict,
+    subset: dict | None,
     extra_job_args: dict,
     match_video_folder: bool = False,
     lazy: bool = False,
@@ -1121,7 +542,7 @@ def find_jobs(
 
         vid_info["gt_type"] = gt_type
 
-        if subset and not all(
+        if subset is not None and not all(
             k not in vid_info or vid_info[k] == v for k, v in subset.items()
         ):
             continue
@@ -1153,18 +574,20 @@ def find_jobs(
     return jobs
 
 
-def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | str | None):
-    if k_equals_v_strs is None:
-        return {}
-    elif isinstance(k_equals_v_strs, str):
-        k_equals_v_strs = k_equals_v_strs.split(" ")
+def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
 
+    if k_equals_v_strs is None:
+        return None
+
+    logger.debug(f"_parse_k_equals_v_strs received: {k_equals_v_strs}")
     args = {}
     for arg in k_equals_v_strs:
         parts = arg.split("=")
         if len(parts) != 2:
             raise ValueError(f"Invalid {arg=}, had {len(parts)=}")
         k, v = parts
+        if "," in v:
+            v = list(v.split(","))
         args[k] = v
     return args
 
@@ -1178,8 +601,10 @@ def process_video_job(job: dict):
     input_path = Path(job["input_path"])
     output_path = Path(job["output_path"])
 
-    tmp_folder = job["tmp_folder"]
-    if tmp_folder is not None:
+    tmp_path = None
+
+    def make_tmp_folder():
+        tmp_folder = job["tmp_folder"]
         out_str = str(output_path)
         out_str = (
             out_str.replace("{", "")
@@ -1188,18 +613,18 @@ def process_video_job(job: dict):
             .replace("_", "-")
             .replace("/", "_")
         )
+
+        nonlocal tmp_path
         tmp_path = tmp_folder / out_str
         tmp_path.mkdir(parents=True, exist_ok=False)
-    else:
-        tmp_path = None
 
-    logger.info(f"Processing {input_path} -> {tmp_path}{output_path}")
+    logger.info(f"Processing {input_path} -> {output_path}")
 
     match input_path.suffix, output_path.suffix:
         case ".png", ".mkv":
             pack_video(input_path, output_path, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
         case _, ".mkv":
-            tmp_template = tmp_path / "{frame:06d}.png"
+            tmp_template = make_tmp_folder() / "{frame:06d}.png"
             pack_frameset(
                 input_path,
                 tmp_template,
@@ -1239,7 +664,7 @@ def process_video_job(job: dict):
                 unpack_channels_last=job["config"].get("unpack_channels_last", None),
             )
         case ".mkv", _:
-            tmp_frames = tmp_path / "{frame:06d}.png"
+            tmp_frames = make_tmp_folder() / "{frame:06d}.png"
             unpack_video(input_path, tmp_frames, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
             unpack_frameset(
                 tmp_frames,
@@ -1284,14 +709,14 @@ def wait_jobs(launched_jobs, pbar):
 
             try:
                 result = j.result()
-                pbar.update(1)
-                pbar.set_description(f"Job {j.job_id} completed successfully")
+                msg = f"Job {j.job_id} completed successfully with {result=}"
             except Exception as e:
                 msg = f"Job {j.job_id} failed with error: {e}"
-                pbar.update(1)
-                pbar.set_description(msg)
                 logger.error(msg)
                 crashed_jobs.append(j)
+
+            pbar.update(1)
+            pbar.set_description(msg)
             finished_jobs.add(j.job_id)
 
         time.sleep(1)
@@ -1305,7 +730,7 @@ def execute_jobs(
     jobs: list[dict],
     paralell_mode: Literal["multiprocess", "slurm", "none"],
     n_workers: int | None,
-    slurm_args: list[str],
+    slurm_args: dict | None,
     cpus_per_worker: int | None = None,
 ):
     logger.info(f"Executing {len(jobs)} jobs with {paralell_mode=} {n_workers=}")
@@ -1334,8 +759,7 @@ def execute_jobs(
                 slurm_time=60,
                 slurm_array_parallelism=n_workers,
             )
-            if slurm_args:
-                slurm_args = _parse_k_equals_v_strs(slurm_args)
+            if slurm_args is not None:
                 executor.update_parameters(**slurm_args)
 
             pbar = tqdm(total=len(jobs), desc="Running jobs")
@@ -1365,6 +789,8 @@ def decide_dataset_job_templates(
 
     If the user restricts `steps`, we may then need to go to/from intermediate vals like quantized pngs
     """
+
+    assert isinstance(datatype_conf, dict), f"Invalid {datatype_conf=}"
 
     if mode == "pack":
         default_src = Path(datatype_conf["original_path_template"])
@@ -1410,13 +836,20 @@ def decide_dataset_job_templates(
         else:
             raise ValueError(f"Unhandled {steps=} for {mode=} {default_src=}")
     elif (
-        (mode == "pack" and default_src.suffix == ".txt" and steps == ["pack_video"])
-        or (mode == "unpack" and default_src.suffix == ".npy" and steps == ["unpack_video"])
+        mode == "pack" and default_src.suffix == ".txt" and steps == ["pack_video"]
     ):
         inp = inp.with_suffix(default_dest.suffix)
         logger.debug(
             f"Changed from {default_src=} to {inp=} due to {mode=} {steps=}, "
-            "packing/unpacking from txt happens in quantize/unquantize not video pack"
+            "packing from txt->npy happens in quantize/unquantize not video pack"
+        )
+    elif (
+        mode == "unpack" and default_src.suffix == ".npy" and steps == ["unpack_video"]
+    ):
+        out = out.with_suffix(default_src.suffix)
+        logger.debug(
+            f"Changed from {default_dest=} to {out=} due to {mode=} {steps=}, "
+            "unpacking from npy->txt happens in quantize/unquantize not video unpack"
         )
     else:
         logger.debug(f"{decide_dataset_job_templates=} didnt match any cases, using {inp=} {out=}")
@@ -1428,24 +861,22 @@ def pack_dataset(
     input_folder: Path,
     output_folder: Path,
     steps: list[str] | None,
-    config_path: Path | None,
+    config: dict | None,
     paralell_mode: Literal["multiprocess", "slurm", "none"],
-    slurm_args: list[str],
+    slurm_args: dict | None,
     n_workers: int,
     tmp_folder: Path,
-    subset: list[str],
+    subset: dict | None,
     lazy: bool,
     cpus_per_worker: int | None = None,
     loglevel: int = None,
 ):
-    if config_path is None:
-        config_path = input_folder / "cvdpack.json"
-    if not config_path.exists():
-        raise ValueError(f"Could not find {config_path=}")
-    with config_path.open("r") as f:
-        config = json.load(f)
+    if config is None:
+        raise ValueError(
+            "pack_dataset requires a config, must use --config "
+            "or use an --input containing a cvdpack.json"
+        )
 
-    subset = _parse_k_equals_v_strs(subset)
 
     jobs = []
     for gt_type, datatype_conf in config["data_types"].items():
@@ -1460,7 +891,12 @@ def pack_dataset(
                 output_template=output_template,
                 gt_type=gt_type,
                 subset=subset,
-                extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf, "cpus_per_worker": cpus_per_worker, "loglevel": loglevel},
+                extra_job_args={
+                    "tmp_folder": tmp_folder,
+                    "config": datatype_conf,
+                    "cpus_per_worker": cpus_per_worker,
+                    "loglevel": loglevel,
+                },
                 lazy=lazy,
                 match_video_folder=True,
             )
@@ -1492,27 +928,25 @@ def unpack_dataset(
     input_folder: Path,
     output_folder: Path,
     steps: list[str] | None,
-    config_path: Path | None,
+    config: dict | None,
     paralell_mode: Literal["multiprocess", "slurm", "none"],
-    slurm_args: list[str],
+    slurm_args: dict | None,
     n_workers: int,
-    subset: list[str],
+    subset: dict | None,
     tmp_folder: Path,
     lazy: bool,
     cpus_per_worker: int | None = None,
     loglevel: int = None,
 ):
-    if config_path is None:
-        config_path = input_folder / "cvdpack.json"
-    if not config_path.exists():
-        raise ValueError(f"Could not find {config_path=}")
-    with config_path.open("r") as f:
-        config = json.load(f)
-
-    subset = _parse_k_equals_v_strs(subset)
+    
+    if config is None:
+        raise ValueError(
+            "unpack_dataset requires a config, must use --config "
+            "or use an --input containing a cvdpack.json"
+        )
 
     jobs = []
-    for datatype_conf in config["data_types"]:
+    for gt_type, datatype_conf in config["data_types"].items():
 
         search_input_template, search_output_template = decide_dataset_job_templates(
             input_folder, output_folder, datatype_conf, steps, mode="unpack",
@@ -1522,8 +956,14 @@ def unpack_dataset(
             find_jobs(
                 input_template=search_input_template,
                 output_template=search_output_template,
+                gt_type=gt_type,
                 subset=subset,
-                extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf, "cpus_per_worker": cpus_per_worker, "loglevel": loglevel},
+                extra_job_args={
+                    "tmp_folder": tmp_folder,
+                    "config": datatype_conf,
+                    "cpus_per_worker": cpus_per_worker,
+                    "loglevel": loglevel,
+                },
                 lazy=lazy,
                 match_video_folder=True,
             )
@@ -1544,7 +984,7 @@ def validate_args(args: argparse.Namespace):
     if args.config is not None and args.config.parts[0] == "presets":
         args.config = Path(__file__).parent / args.config
 
-    if args.parallel_mode != "none" and not args.action.endswith("_dataset"):
+    if args.n_workers is not None and not args.action.endswith("_dataset"):
         raise ValueError(
             f"--parallel_mode {args.parallel_mode=} only applies to paralellism over videos, not {args.action=}."
             " per-frame paralellism is not currently supported"
@@ -1577,6 +1017,7 @@ def parse_args():
             "unpack_frames",
             "pack_dataset",
             "unpack_dataset",
+            "reorganize",
         ],
     )
     parser.add_argument("--input", type=Path, required=True)
@@ -1632,7 +1073,7 @@ def parse_args():
     parser.add_argument(
         "--subset",
         type=str,
-        nargs="?",
+        nargs="*",
         default=None,
         help=(
             "Restricts the pack/unpack to only operate on some scenes/gt/cameras. "
@@ -1659,6 +1100,46 @@ def parse_args():
     return validate_args(parser.parse_args())
 
 
+def reorganize_files(
+    input_template: Path, 
+    output_template: Path,
+    subset: dict,
+    loglevel: int,
+):
+    logger.info(f"Reorganizing files from {input_template} to {output_template}")
+
+    if subset is not None and len(subset) > 0:
+        template_new = format_template(input_template, subset)
+        logger.info(f"Using subset {subset=} to filter input template {input_template=} to {template_new=}")
+        input_template = template_new
+
+    input_files = list(match_template_paths(input_template))
+    if len(input_files) == 0:
+        raise ValueError(f"No files found matching template: {input_template=}")
+    
+    
+    output_files = [
+        format_template(output_template, file_info)
+        for file_info, _ in input_files
+    ]
+    input_files = [f for _, f in input_files]
+
+    uniq_inp = set(input_files)
+    uniq_out = set(output_files)
+    if len(uniq_inp) != len(uniq_out):
+        raise ValueError(f"Reorganize from {input_template=} to {output_template=} is not one-to-one, got {len(uniq_inp)=} {len(uniq_out)=}")
+
+    iter = zip(input_files, output_files)
+    if loglevel <= logging.INFO:
+        iter = tqdm(iter, total=len(input_files))
+    for input_file_path, output_file_path in iter:
+
+        output_file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        logger.debug(f"Copying {input_file_path} -> {output_file_path}")
+        shutil.copy(input_file_path, output_file_path)
+
+
 def format_for_json(obj):
     if isinstance(obj, Path):
         return str(obj)
@@ -1671,7 +1152,6 @@ def main():
 
     args = parse_args()
     
-    # Configure logging with a console handler
     logging.basicConfig(
         level=args.loglevel,
         format='[%(asctime)s] [%(levelname)s] %(message)s',
@@ -1679,6 +1159,14 @@ def main():
         handlers=[logging.StreamHandler()]
     )
     logger.setLevel(args.loglevel)
+
+    config_path = args.config
+    if config_path is None and args.action.endswith("_dataset"):
+        config_path = args.input / "cvdpack.json"
+
+    if config_path is not None:
+        with config_path.open("r") as f:
+            config = json.load(f)
 
     out_suffix = (
         args.output.suffix if not args.output.is_dir() else None
@@ -1724,15 +1212,15 @@ def main():
                 args.input,
                 args.output,
                 args.steps,
-                args.config,
+                config,
                 args.parallel_mode,
                 args.slurm_args,
                 args.n_workers,
                 args.tmp_folder,
-                args.subset,
-                args.lazy,
-                args.cpus_per_worker,
-                args.loglevel,
+                subset=_parse_k_equals_v_strs(args.subset),
+                lazy=args.lazy,
+                cpus_per_worker=args.cpus_per_worker,
+                loglevel=args.loglevel,
             )
         case "unpack_dataset", _:
             if not args.input.is_dir():
@@ -1741,24 +1229,28 @@ def main():
                 args.input,
                 args.output,
                 args.steps,
-                args.config,
+                config,
                 args.parallel_mode,
                 args.slurm_args,
                 args.n_workers,
-                args.subset,
-                args.tmp_folder,
-                args.lazy,
-                args.cpus_per_worker,
-                args.loglevel,
+                subset=_parse_k_equals_v_strs(args.subset),
+                tmp_folder=args.tmp_folder,
+                lazy=args.lazy,
+                cpus_per_worker=args.cpus_per_worker,
+                loglevel=args.loglevel,
+            )
+        case "reorganize", _:
+            reorganize_files(
+                args.input, 
+                args.output, 
+                subset=_parse_k_equals_v_strs(args.subset),
+                loglevel=args.loglevel,
             )
         case _:
             raise ValueError(f"Invalid {args.action=}")
 
-    if args.config is None:
+    if args.action == "reorganize" or config is None:
         return
-
-    with args.config.open("r") as f:
-        config = json.load(f)
 
     if args.action == "pack_frames" and args.output.suffix == ".png":
         config["data_types"].append(
@@ -1784,8 +1276,8 @@ def main():
     if args.action.endswith("_dataset"):
         with (args.output / "cvdpack.json").open("w") as f:
             json.dump(config, f, indent=2, default=format_for_json)
-    elif args.config is not None and not str(args.config).startswith("presets/"):
-        with args.config.open("w") as f:
+    elif config_path is not None and not str(config_path).startswith("presets/"):
+        with config_path.open("w") as f:
             json.dump(config, f, indent=2, default=format_for_json)
 
     print(f"Completed {args.action} for result {args.output} in {time.time() - start_time:.2f}s")
