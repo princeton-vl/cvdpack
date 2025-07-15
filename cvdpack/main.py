@@ -258,6 +258,15 @@ def img_orig_to_quant(
 
 
 def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False):
+    if "{frame}" in str(input_path):
+        # note RE this warning - we could potentially map {frame} to %04d for ffmpeg, but:
+        # (1) it is hard to guess the num digits and
+        # (2) this is difficult for cases like TartanAir flow where paths contain both {frame:06d} and {framenext:06d}
+        raise ValueError(
+            "Direct use of {{frame}} as a template is banned - you must use {{frame:04d}} for some integer. "
+            "this is because frame without 0 padding will not be sorted properly when globbed to form a video"
+        )
+
     newname = re.sub(
         r"\{frame.*:(0\d+)d\}",  # e.g. {frame:06d} or {framenext:06d}
         lambda m: "*" if as_glob else f"%{m.group(1)}d",
@@ -355,7 +364,7 @@ def pack_video(
 def match_template_paths(
     template: Path,
     match_video_folder: bool = False,
-):
+) -> list[tuple[dict, Path]]:
     parts = template.parts
     first_curlypart = next((i for i, p in enumerate(parts) if "{" in p), None)
     child_template = "/".join(parts[first_curlypart:])
@@ -535,7 +544,7 @@ def find_jobs(
     extra_job_args: dict,
     match_video_folder: bool = False,
     lazy: bool = False,
-):
+) -> list[dict]:
     input_template = format_template(input_template, {"gt_type": gt_type})
 
     if match_video_folder and "{frame" in input_template.parts[-1]:
@@ -545,7 +554,7 @@ def find_jobs(
         search_template = input_template
         input_template_extra = None
 
-    paths = match_template_paths(search_template)
+    paths = list(match_template_paths(search_template))
     paths, skipped_for_subset = filter_files_by_subset_dict(paths, subset)
 
     skipped_for_lazy = 0
