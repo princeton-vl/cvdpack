@@ -25,6 +25,7 @@
             "original_path_template": "{scene}/{split}/{vid}/{gt_type}/{frame:06d}_{framenext:06d}_{gt_type}.npy",
             "packed_path_template": "{scene}/{split}/{vid}/{gt_type}.mkv",
             "unpack_dtype": "float32",
+            "unpack_channels_last": 2,
             "min_orig_val": -200,
             "max_orig_val": 200,
             "pack_dtype": "uint16",

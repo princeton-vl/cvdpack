@@ -157,28 +157,44 @@ def normalize_vals(
             raise ValueError(f"Invalid {quantize_method=} {type(quantize_method)=}")
 
 
-def unnormalize_vals(
+def img_quant_to_orig(
     img: np.ndarray,
     min_orig_val: float,
     max_orig_val: float,
+    from_dtype: np.dtype,
     to_dtype: np.dtype,
     quantize_method: QuantizeMethod,
+    unpack_channels_last: int | None = None,
 ) -> np.ndarray:
+    
+    assert np.issubdtype(from_dtype, np.unsignedinteger), f"{from_dtype=}"
+    from_max = np.iinfo(from_dtype).max
+
     match quantize_method:
         case QuantizeMethod.CHECKBOUNDS:
-            return img.astype(to_dtype)
+            img = img.astype(to_dtype)
         case QuantizeMethod.LINEAR:
-            return img.astype(to_dtype) * (max_orig_val - min_orig_val) + min_orig_val
+            img_norm = img.astype(np.float64) / from_max
+            img_orig = (img_norm * (max_orig_val - min_orig_val) + min_orig_val)
+            img = img_orig.astype(to_dtype)
         case QuantizeMethod.INV:
+def img_orig_to_quant(
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
-            img_inv = (img.astype(to_dtype) - min_norm) / (max_norm - min_norm)
-            return 1 / img_inv
+            img_unmap = (img_norm * (max_norm - min_norm) + min_norm)
+            img_orig = 1 / img_unmap
+            img = img_orig.astype(to_dtype)
         case _:
             raise ValueError(f"Invalid {quantize_method=}")
-
-
-def quantize_frame(
+        
+    if unpack_channels_last is not None:
+        # needed for cases like flow, which can be 2 channel, but will have been promoted to a 3 channel png/mkv
+        assert img.ndim == 3, f"{img.ndim=}"
+        assert img.shape[-1] >= unpack_channels_last, f"{img.shape=}"
+        img = img[..., :unpack_channels_last]
+    
+    return img
+def img_orig_to_quant(
     input_img_path: Path,
     output_img_path: Path,
     to_dtype: np.dtype,
@@ -230,7 +246,7 @@ def quantize_frame(
         img_quant[oob_mask] = intmax
         img_quant[~oob_mask] = (img_norm[~oob_mask] * (intmax - 1)).astype(to_dtype) + 1
 
-    if logger.isEnabledFor(logging.DEBUG):
+    return img_quant
         logger.debug(
             f"Quantizing {input_img_path=} to {output_img_path=}, {img.min()=:.2f}, {img.max()=:.2f}, {img_quant.min()=:.2f}, {img_quant.max()=:.2f}"
         )
@@ -245,7 +261,7 @@ def quantize_frame(
             [img_quant, np.zeros_like(img_quant[:, :, :1])], axis=2
         )
 
-    save_any_image(img_quant, output_img_path)
+    return img_quant
 
 
 def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False):
@@ -384,7 +400,7 @@ def pack_frameset(
     quantize_method: QuantizeMethod,
     min_orig_val: float,
     max_orig_val: float,
-    out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
+        img_quant = img_orig_to_quant(
 ):
 
     logger.debug(
@@ -400,6 +416,23 @@ def pack_frameset(
     for frame_info, frame_input_path in all_files:
         output_path = format_template(output_path_template, frame_info)
 
+        img_quant = img_orig_to_quant(
+    all_files = list(match_template_paths(input_path_template))
+    unpack_channels_last: int | None = None,
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
         quantize_frame(
             frame_input_path,
             output_path,
@@ -409,7 +442,381 @@ def pack_frameset(
             max_orig_val=max_orig_val,
             out_of_bounds_method=out_of_bounds_method,
         )
+        save_any_image(img_quant, output_path)
 
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    unpack_channels_last: int | None = None,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    unpack_channels_last: int | None = None,
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        unpack_channels_last=unpack_channels_last,
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    unpack_channels_last: int | None = None,
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+    img_unquant = img_quant_to_orig(
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+        unpack_channels_last=unpack_channels_last,
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+    logger.debug(
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        unpack_channels_last=unpack_channels_last,
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+):
+    assert input_img_path.suffix == ".png"
+    img = load_any_image(input_img_path)
+
+                unpack_channels_last=job["config"].get("unpack_channels_last", None),
+    assert np.issubdtype(img.dtype, np.integer), f"{input_img_path=} had {img.dtype=}"
+
+    img_unquant = img_quant_to_orig(
+        img,
+        min_orig_val,
+        max_orig_val,
+        to_dtype=to_dtype,
+        quantize_method=quantize_method,
+        unpack_channels_last=unpack_channels_last,
+    )
+
+    if quantize_method != QuantizeMethod.CHECKBOUNDS:
+                unpack_channels_last=job["config"].get("unpack_channels_last", None),
+        isnan = img == np.iinfo(img.dtype).max
+        img_unquant[isnan] = np.nan
+
+    logger.debug(
+        f"Unquantizing {input_img_path=} to {output_img_path=}, {img_unquant.min()=:.2f}, {img_unquant.max()=:.2f}"
+    )
+
+    save_any_image(img_unquant, output_img_path)
+
+
+def unpack_frameset(
+    input_path_template: Path,
+    output_path_template: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        unpack_channels_last=unpack_channels_last,
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    unpack_channels_last: int | None = None,
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+    img_unquant = img_quant_to_orig(
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+        unpack_channels_last=unpack_channels_last,
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+    logger.debug(
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        unpack_channels_last=unpack_channels_last,
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
 
 def unquantize_frame(
     input_img_path: Path,
@@ -424,19 +831,214 @@ def unquantize_frame(
 
     assert np.issubdtype(img.dtype, np.integer), f"{input_img_path=} had {img.dtype=}"
 
-    img_unquant = unnormalize_vals(
+    img_unquant = img_quant_to_orig(
         img,
         min_orig_val,
         max_orig_val,
         to_dtype=to_dtype,
         quantize_method=quantize_method,
+        unpack_channels_last=unpack_channels_last,
     )
 
     if quantize_method != QuantizeMethod.CHECKBOUNDS:
         isnan = img == np.iinfo(img.dtype).max
         img_unquant[isnan] = np.nan
 
-    logger.info(
+    logger.debug(
+        f"Unquantizing {input_img_path=} to {output_img_path=}, {img_unquant.min()=:.2f}, {img_unquant.max()=:.2f}"
+    )
+
+    save_any_image(img_unquant, output_img_path)
+
+
+def unpack_frameset(
+    input_path_template: Path,
+    output_path_template: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+            unpack_channels_last=unpack_channels_last,
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        unpack_channels_last=unpack_channels_last,
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    unpack_channels_last: int | None = None,
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+    img_unquant = img_quant_to_orig(
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+        unpack_channels_last=unpack_channels_last,
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+    logger.debug(
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    unpack_channels_last: int | None = None,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+    img_unquant = img_quant_to_orig(
+        save_any_image(img_quant, output_path)
+    if len(all_files) == 0:
+        raise ValueError(f"No frames found in {input_path_template=}")
+
+    for frame_info, frame_input_path in all_files:
+        unpack_channels_last=unpack_channels_last,
+        output_path = format_template(output_path_template, frame_info)
+
+        quantize_frame(
+            frame_input_path,
+            output_path,
+            to_dtype,
+            quantize_method=quantize_method,
+            min_orig_val=min_orig_val,
+            max_orig_val=max_orig_val,
+            out_of_bounds_method=out_of_bounds_method,
+        )
+        save_any_image(img_quant, output_path)
+
+def unquantize_frame(
+    input_img_path: Path,
+    output_img_path: Path,
+    to_dtype: np.dtype,
+    quantize_method: QuantizeMethod,
+    min_orig_val: float,
+    max_orig_val: float,
+):
+    assert input_img_path.suffix == ".png"
+    img = load_any_image(input_img_path)
+
+    assert np.issubdtype(img.dtype, np.integer), f"{input_img_path=} had {img.dtype=}"
+
+    img_unquant = img_quant_to_orig(
+        img,
+        min_orig_val,
+        max_orig_val,
+        to_dtype=to_dtype,
+        quantize_method=quantize_method,
+        unpack_channels_last=unpack_channels_last,
+    )
+
+    if quantize_method != QuantizeMethod.CHECKBOUNDS:
+        isnan = img == np.iinfo(img.dtype).max
+        img_unquant[isnan] = np.nan
+
+    logger.debug(
         f"Unquantizing {input_img_path=} to {output_img_path=}, {img_unquant.min()=:.2f}, {img_unquant.max()=:.2f}"
     )
 
@@ -468,6 +1070,7 @@ def unpack_frameset(
             quantize_method=quantize_method,
             min_orig_val=min_orig_val,
             max_orig_val=max_orig_val,
+            unpack_channels_last=unpack_channels_last,
         )
 
 
@@ -633,6 +1236,7 @@ def process_video_job(job: dict):
                 ),
                 min_orig_val=float(job["config"]["min_orig_val"]),
                 max_orig_val=float(job["config"]["max_orig_val"]),
+                unpack_channels_last=job["config"].get("unpack_channels_last", None),
             )
         case ".mkv", _:
             tmp_frames = tmp_path / "{frame:06d}.png"
@@ -646,6 +1250,7 @@ def process_video_job(job: dict):
                 ),
                 min_orig_val=float(job["config"]["min_orig_val"]),
                 max_orig_val=float(job["config"]["max_orig_val"]),
+                unpack_channels_last=job["config"].get("unpack_channels_last", None),
             )
         case ".txt", ".npy":
             data = np.loadtxt(input_path)
