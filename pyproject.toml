@@ -23,6 +23,9 @@ dependencies = [
     "opencv-python",
     "tqdm"
 ]
+dev = [
+    "ruff",
+]
 
 [project.scripts]
 cvdpack = "cvdpack.main:main"

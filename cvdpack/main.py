@@ -7,7 +7,6 @@
 # - Alexander Raistrick <araistrick@princeton.edu>
 
 import argparse
-import copy
 import json
 import logging
 import multiprocessing
@@ -15,17 +14,17 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from enum import Enum
-import itertools
 from pathlib import Path
 from string import Formatter
-from typing import Literal, Callable
+from typing import Callable, Literal
 
 import cv2
 import numpy as np
-from cvdpack import __version__
-import time
 from tqdm import tqdm
+
+from cvdpack import __version__
 
 try:
     import submitit
