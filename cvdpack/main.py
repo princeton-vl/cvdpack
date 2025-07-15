@@ -599,39 +599,12 @@ def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
     return args
 
 
-def _calculate_config_precision(method, low, high, dtype):
-    pass
-
-
-def process_video_job(job: dict):
-    input_path = Path(job["input_path"])
-    output_path = Path(job["output_path"])
-
-    tmp_path = None
-
-    def make_tmp_folder(exists_ok: bool = False):
-        tmp_folder = job["tmp_folder"]
-        out_str = str(output_path)
-        out_str = (
-            out_str.replace("{", "")
-            .replace("}", "")
-            .replace(":", "")
-            .replace("_", "-")
-            .replace("/", "_")
-        )
-
-        nonlocal tmp_path
-        tmp_path = tmp_folder / out_str
-
-        logger.debug(
-            f"Making {tmp_path=} for {input_path=} -> {output_path=}, {tmp_path.exists()=}"
-        )
-
-        tmp_path.mkdir(parents=True, exist_ok=exists_ok)
-        return tmp_path
-
-    logger.info(f"Processing {input_path} -> {output_path}")
-
+def _process_video(
+    input_path: Path,
+    output_path: Path,
+    job: dict,
+    make_tmp_folder: Callable,
+):
     metadata_commands = []
 
     match input_path.suffix, output_path.suffix:
@@ -730,8 +703,49 @@ def process_video_job(job: dict):
         case _:
             raise ValueError(f"Invalid {input_path.suffix=} {output_path.suffix=}")
 
-    if tmp_path is not None:
-        shutil.rmtree(tmp_path)
+    return metadata_commands
+
+
+def process_video_job(job: dict):
+    input_path = Path(job["input_path"])
+    output_path = Path(job["output_path"])
+
+    tmp_path = None
+
+    # we create the tmp_folder conditionally, so that we only throw for tmp_folder None if the job actually needed a tmp_folder
+    def make_tmp_folder():
+        tmp_folder = job["tmp_folder"]
+        out_str = str(output_path)
+        out_str = (
+            out_str.replace("{", "")
+            .replace("}", "")
+            .replace(":", "")
+            .replace("_", "-")
+            .replace("/", "_")
+        )
+
+        nonlocal tmp_path
+        tmp_path = tmp_folder / out_str
+
+        logger.debug(
+            f"Making {tmp_path=} for {input_path=} -> {output_path=}, {tmp_path.exists()=}"
+        )
+
+        tmp_path.mkdir(parents=True, exist_ok=False)
+        return tmp_path
+
+    logger.info(f"Processing {input_path} -> {output_path}")
+
+    try:
+        metadata_commands = _process_video(
+            input_path,
+            output_path,
+            job,
+            make_tmp_folder,
+        )
+    finally:
+        if tmp_path is not None:
+            shutil.rmtree(tmp_path)
 
     return {
         "commands": metadata_commands,
@@ -953,17 +967,6 @@ def pack_dataset(
                 lazy=lazy,
                 match_video_folder=True,
             )
-        )
-
-    for gt_type, gt_conf in config["data_types"].items():
-        quantize_method = gt_conf.get("quantize_method", "NONE")
-        if quantize_method in ["NONE", "CHECKBOUNDS"]:
-            continue
-        gt_conf["quantize_precision"] = _calculate_config_precision(
-            method=QuantizeMethod.from_str(quantize_method),
-            low=float(gt_conf["min_orig_val"]),
-            high=float(gt_conf["max_orig_val"]),
-            dtype=gt_conf["pack_dtype"],
         )
 
     execute_jobs(
@@ -1294,13 +1297,6 @@ def main():
                 "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
             )
 
-    if args.tmp_folder is not None:
-        h = hash((args.input, args.output))
-        tmp_folder = args.tmp_folder / str(h)[:16]
-        tmp_folder.mkdir(parents=True, exist_ok=False)
-    else:
-        tmp_folder = None
-
     out_suffix = args.output.suffix if not args.output.is_dir() else None
     match args.action, out_suffix:
         case "pack_frames", ".png":
@@ -1349,7 +1345,7 @@ def main():
                 args.parallel_mode,
                 args.slurm_args,
                 args.n_workers,
-                tmp_folder,
+                args.tmp_folder,
                 subset=_parse_k_equals_v_strs(args.subset),
                 lazy=args.lazy,
                 cpus_per_worker=args.cpus_per_worker,
@@ -1369,7 +1365,7 @@ def main():
                 args.slurm_args,
                 args.n_workers,
                 subset=_parse_k_equals_v_strs(args.subset),
-                tmp_folder=tmp_folder,
+                tmp_folder=args.tmp_folder,
                 lazy=args.lazy,
                 cpus_per_worker=args.cpus_per_worker,
                 loglevel=args.loglevel,
@@ -1383,9 +1379,6 @@ def main():
             )
         case _:
             raise ValueError(f"Invalid {args.action=}")
-
-    if tmp_folder is not None:
-        shutil.rmtree(tmp_folder, ignore_errors=True)
 
     if args.action == "copy" or config is None:
         return
