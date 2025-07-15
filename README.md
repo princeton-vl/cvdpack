@@ -43,7 +43,7 @@ Note: we use TartanAir as an example dataset, but cvdpack is not specific to Tar
 
 Commands will print very little output, unless they fail or you add -v or --debug
 
-### Pack/unpack tartanair scene locally. 
+#### Pack/unpack tartanair scene locally. 
 Commands shown are for a single scene and video, remove --subset to do the full thing
 ```bash
 cvdpack pack_dataset --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
@@ -53,7 +53,7 @@ cvdpack unpack_dataset --input data/TartanAir_packed --output data/TartanAir_unp
 Runtime for one scene is approx 31sec and 28sec respectively on a AMD EPYC 7713P 64-core machine.
 Filesizes are approx 8.6GB for the raw abandonedfactory/Hard/P000 scene, 526M for the packed version (94% savings)
 
-### Pack/unpack all of TartanAir on a SLURM cluster 
+#### Pack/unpack all of TartanAir on a SLURM cluster 
 Commands shown work for princeton-vl's cluster, you will need to customize the paths and slurm args for own cluster.
 ```bash
 screen cvdpack pack_dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
@@ -61,7 +61,7 @@ screen cvdpack pack_dataset --input /n/fs/circuitnn/datasets/TartanAir --output 
 screen cvdpack unpack_dataset --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
-### Partially pack/unpack TartanAir 
+#### Partially pack/unpack TartanAir 
 
 e.g just npys -> pngs, or just pngs -> mkvs, or mkvs -> pngs, or pngs -> npys. These can be run in sequence. 
 
@@ -75,18 +75,18 @@ For a single scene (abandonedfactory/Hard/P000):
 - Runtimes are approx 34sec, 58sec, 12sec, 23sec respectively on a AMD EPYC 7713P 64-core machine.
 - Result sizes are approx TODO, TODO, TODO, TODO respectively.
 
-### Reorganize a dataset
+#### Reorganize a dataset
 ```bash
 cvdpack copy --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_*.{ext} --output data/TartanAir_split/{scene}/{split}_{vid}/{cam}/{gt_type}/{frame:04d}.{ext}
 ```
 
-### Extract a subset of a dataset
+#### Extract a subset of a dataset
 ```bash
 cvdpack copy --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_*.{ext} --output data/TartanAir_split/{} --subset scene=abandonedfactory split=Hard vid=P000,P001 gt_type=image,depth cam=left
 ```
 Note: currently struggles to do the whole dataset for some dataset layouts e.g. TartanAir which stores many gt types in the same folder (flow and mask).
 
-Pack individual videos in TartanAir, step by step
+#### Pack individual videos in TartanAir, step by step
 ```bash
 # pack depth/flow into pngs (quantization)
 cvdpack pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/flow/{frame:06d}_{framenext:06d}_flow.npy --output pngs/flow/{frame:06d}.png --to_dtype uint16 --quantize_method LINEAR --min_orig_val -150 --max_orig_val 150
