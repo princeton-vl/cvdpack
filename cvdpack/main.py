@@ -89,7 +89,7 @@ PROPS_TO_ENCODER_PIXFMT = {
 
 def load_any_image(path, allow_pickle=False):
     match path.suffix:
-        case ".png":
+        case ".png" | ".jpg" | ".jpeg":
             return cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         case ".exr":
             raise NotImplementedError(f"Unhandled {path.suffix=} for {path=}")
@@ -111,7 +111,7 @@ def save_any_image(
         )
 
     match path.suffix, img.dtype:
-        case ".png", np.uint8 | np.uint16:
+        case ((".png" | ".jpg" | ".jpeg"), np.uint8 | np.uint16):
             cv2.imwrite(str(path), img)
         case ".npy", _:
             np.save(path, img)

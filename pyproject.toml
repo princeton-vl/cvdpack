@@ -1,6 +1,6 @@
 [project]
 name = "cvdpack"
-version = "0.0.1"
+version = "0.0.2"
 description = "Quantize and video-compress your RGB/Depth/Flow/SurfaceNormal datasets"
 readme = "README.md"
 authors = [
