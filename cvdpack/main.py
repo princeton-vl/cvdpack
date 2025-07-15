@@ -562,12 +562,15 @@ def find_jobs(
         input_template_extra = None
 
     paths = list(match_template_paths(search_template))
-    paths, skipped_for_subset = filter_files_by_subset_dict(paths, subset)
 
+    skipped_for_subset = 0
     skipped_for_lazy = 0
     jobs = []
     for vid_info, vid_input_path in paths:
         vid_info["gt_type"] = gt_type
+        if not included_in_filter(vid_info, subset):
+            skipped_for_subset += 1
+            continue
 
         output_path = format_template(output_template, vid_info, allow_missing=[])
         if lazy and output_path.exists():
@@ -1195,35 +1198,30 @@ def parse_args():
     return validate_args(parser.parse_args())
 
 
-def filter_files_by_subset_dict(
-    input_files: list[tuple[dict, Path]], subset: dict | None
-):
-    if subset is None:
-        return input_files, 0
+def included_in_filter(
+    file_keys: dict,
+    filter_vals: dict | None,
+) -> bool:
+    if filter_vals is None:
+        return False
 
-    def allowed(file_info: dict):
-        return all(
-            (
-                k not in file_info
-                or file_info[k] == v
-                or (isinstance(v, (list, set)) and file_info[k] in v)
-            )
-            for k, v in subset.items()
+    first_keys = set(file_keys.keys())
+    extra = set(filter_vals.keys()) - first_keys
+    if extra:
+        raise ValueError(
+            f"{filter_vals=} had keys {extra} which are not present in the input file template. "
+            f"Keys available to filter on are {first_keys}"
         )
 
-    res = [
-        (file_info, file_path)
-        for file_info, file_path in input_files
-        if allowed(file_info)
-    ]
-    skipped = len(input_files) - len(res)
-
-    if len(res) == 0 and len(input_files) > 0:
-        logger.warning(
-            f"Filtering on {subset=} caused ALL {len(input_files)} files to be skipped"
+    res = all(
+        (
+            k not in file_keys
+            or file_keys[k] == v
+            or (isinstance(v, (list, set)) and file_keys[k] in v)
         )
-
-    return res, skipped
+        for k, v in filter_vals.items()
+    )
+    return res
 
 
 def copy_files(
@@ -1254,8 +1252,11 @@ def copy_files(
                 f"Invalid {input_template=} {output_template=}, cannot infer the dataset structure"
             )
 
-    input_files = list(match_template_paths(input_template))
-    input_files, skipped_for_subset = filter_files_by_subset_dict(input_files, subset)
+    input_files = [
+        (tvals, path)
+        for tvals, path in match_template_paths(input_template)
+        if included_in_filter(tvals, subset)
+    ]
 
     if len(input_files) == 0:
         raise ValueError(
@@ -1312,7 +1313,11 @@ def main():
         with config_path.open("r") as f:
             config = json.load(f)
         config_version = config.get("metadata", {}).get("cvdpack_version")
-        if config_version is not None and not args.no_verify_version:
+        if (
+            config_version is not None
+            and not args.no_verify_version
+            and config_version != __version__
+        ):
             raise ValueError(
                 f"Config {config_path} was made for cvdpack version {config_version} which does not match installed cvdpack={__version__} "
                 "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
