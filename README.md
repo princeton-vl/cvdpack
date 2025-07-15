@@ -66,11 +66,12 @@ screen python -m cvdpack.main unpack_dataset --input /n/fs/scratch/$USER/data/Ta
 
 Partially pack/unpack tartanair (e.g just npys -> pngs, or just pngs -> mkvs, or mkvs -> pngs, or pngs -> npys). These can be run in sequence. 
 ```bash
-python -m cvdpack.main pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/ --config presets/tartanair.json --steps quantize --n_workers 20
-python -m cvdpack.main pack_dataset --input data/TartanAir_partialpack/ --output data/TartanAir_pack/ --steps pack_video --n_workers 20
-python -m cvdpack.main unpack_dataset --input data/TartanAir_pack/ --output data/TartanAir_partialunpack/ --steps unpack_video --n_workers 20
-python -m cvdpack.main unpack_dataset --input data/TartanAir_partialunpack/ --output data/TartanAir_unpacked/ --steps unquantize --n_workers 20
+python -m cvdpack.main pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/ --config presets/tartanair.json --steps quantize --n_workers 20 --cpus_per_worker 4
+python -m cvdpack.main pack_dataset --input data/TartanAir_partialpack/ --output data/TartanAir_pack/ --steps pack_video --n_workers 20 --cpus_per_worker 4
+python -m cvdpack.main unpack_dataset --input data/TartanAir_pack/ --output data/TartanAir_partialunpack/ --steps unpack_video --n_workers 20 --cpus_per_worker 4
+python -m cvdpack.main unpack_dataset --input data/TartanAir_partialunpack/ --output data/TartanAir_unpacked/ --steps unquantize --n_workers 20 --cpus_per_worker 4
 ```
+Runtimes are approx 34sec, TODO, TODO, TODO respectively on a AMD EPYC 7713P 64-core machine.
 
 Pack individual videos in TartanAir, step by step
 ```bash

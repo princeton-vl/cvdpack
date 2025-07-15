@@ -1061,9 +1061,10 @@ def format_for_json(obj):
 
 
 def main():
-    args = parse_args()
 
-    print(f"{args.loglevel=}")
+    start_time = time.time()
+
+    args = parse_args()
     
     # Configure logging with a console handler
     logging.basicConfig(
@@ -1073,8 +1074,6 @@ def main():
         handlers=[logging.StreamHandler()]
     )
     logger.setLevel(args.loglevel)
-
-    start = time.time()
 
     out_suffix = (
         args.output.suffix if not args.output.is_dir() else None
@@ -1175,7 +1174,7 @@ def main():
     config["metadata"]["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
     config["metadata"]["cvdpack_version"] = __version__
     config["metadata"]["args"] = vars(args)
-    config["metadata"]["pack_runtime"] = time.time() - start
+    config["metadata"]["pack_runtime"] = time.time() - start_time
 
     if args.action.endswith("_dataset"):
         with (args.output / "cvdpack.json").open("w") as f:
@@ -1184,6 +1183,7 @@ def main():
         with args.config.open("w") as f:
             json.dump(config, f, indent=2, default=format_for_json)
 
+    print(f"Completed {args.action} for result {args.output} in {time.time() - start_time:.2f}s")
 
 if __name__ == "__main__":
     main()
