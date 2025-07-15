@@ -941,11 +941,6 @@ def pack_dataset(
     cpus_per_worker: int | None = None,
     loglevel: int = None,
 ):
-    if tmp_folder is not None and tmp_folder.exists():
-        raise ValueError(
-            f"--tmp_folder {tmp_folder} already exists, please use a different one or consider deleting it"
-        )
-
     if config is None:
         raise ValueError(
             "pack_dataset requires a config, must use --config "
@@ -1019,11 +1014,6 @@ def unpack_dataset(
         raise ValueError(
             "unpack_dataset requires a config, must use --config "
             "or use an --input containing a cvdpack.json"
-        )
-
-    if tmp_folder is not None and tmp_folder.exists():
-        raise ValueError(
-            f"--tmp_folder {tmp_folder} already exists, please use a different one or consider deleting it"
         )
 
     jobs = []
@@ -1323,6 +1313,13 @@ def main():
                 "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
             )
 
+    if args.tmp_folder is not None:
+        h = hash((args.input, args.output))
+        tmp_folder = args.tmp_folder / str(h)[:16]
+        tmp_folder.mkdir(parents=True, exist_ok=False)
+    else:
+        tmp_folder = None
+
     out_suffix = args.output.suffix if not args.output.is_dir() else None
     match args.action, out_suffix:
         case "pack_frames", ".png":
@@ -1371,7 +1368,7 @@ def main():
                 args.parallel_mode,
                 args.slurm_args,
                 args.n_workers,
-                args.tmp_folder,
+                tmp_folder,
                 subset=_parse_k_equals_v_strs(args.subset),
                 lazy=args.lazy,
                 cpus_per_worker=args.cpus_per_worker,
@@ -1391,7 +1388,7 @@ def main():
                 args.slurm_args,
                 args.n_workers,
                 subset=_parse_k_equals_v_strs(args.subset),
-                tmp_folder=args.tmp_folder,
+                tmp_folder=tmp_folder,
                 lazy=args.lazy,
                 cpus_per_worker=args.cpus_per_worker,
                 loglevel=args.loglevel,
@@ -1405,6 +1402,9 @@ def main():
             )
         case _:
             raise ValueError(f"Invalid {args.action=}")
+
+    if tmp_folder is not None:
+        shutil.rmtree(tmp_folder, ignore_errors=True)
 
     if args.action == "copy" or config is None:
         return
