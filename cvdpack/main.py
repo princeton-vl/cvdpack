@@ -412,6 +412,9 @@ def match_template_paths(
 
     glob_pattern = re.sub(r"\{[^}]*\}", "*", child_template)
 
+    logger.debug(
+        f"Searching {search_folder=} using {glob_pattern=} created from {child_template=}"
+    )
     files = sorted(list(search_folder.rglob(glob_pattern)))
     logger.debug(
         f"{search_folder=} had {len(files)} files matching {glob_pattern=}, testing against {regex=}"
@@ -520,7 +523,10 @@ def format_template(template: Path, vals: dict, allow_missing: list[str] | None 
     res = re.sub(r"\{([^}]+)\}", replace_func, str(template))
 
     if isinstance(template, Path):
-        return Path(res)
+        res = Path(res)
+
+    logger.debug(f"{format_template.__name__} {template=} -> {res=}")
+
     return res
 
 
@@ -533,7 +539,10 @@ def find_jobs(
     match_video_folder: bool = False,
     lazy: bool = False,
 ) -> list[dict]:
-    input_template = format_template(input_template, {"gt_type": gt_type})
+    if subset is None:
+        subset = {}
+    subset["gt_type"] = gt_type
+    input_template = format_template(input_template, subset)
 
     if match_video_folder and "{frame" in input_template.parts[-1]:
         search_template = input_template.parent
@@ -541,6 +550,8 @@ def find_jobs(
     else:
         search_template = input_template
         input_template_extra = None
+
+    print(f"{search_template=} {input_template_extra=}")
 
     paths = list(match_template_paths(search_template))
 
