@@ -945,6 +945,20 @@ def validate_args(args: argparse.Namespace):
             " per-frame paralellism is not currently supported"
         )
 
+    avoids_ffmpeg = (
+        args.steps is not None
+        and len(set(args.steps).intersection({"pack_video", "unpack_video"})) == 0
+    )
+
+    if not avoids_ffmpeg:
+        try:
+            subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            raise ValueError(
+                "ffmpeg is required for video operations but was not found. "
+                "Please install ffmpeg and ensure it's available in your PATH."
+            )
+
     return args
 
 

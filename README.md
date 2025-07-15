@@ -13,12 +13,14 @@ Reduce your dataset size by up to 90+%, with minimal changes in groundtruth accu
 
 ##### Installation
 
-Required: you must have `ffmpeg` installed an in your PATH. uv/pip will not install this currently. Choose one:
+Required: you must have `ffmpeg` installed and in your PATH. Currently I have not configured uv/pip to install this for you (TODO)
+
+If ffmpeg is not already installed, choose an install option:
 ```bash
 conda install ffmpeg
 sudo apt install ffmpeg libx265-dev
 brew install ffmpeg
-# windows - TBD?
+# windows - TODO?
 ```
 
 Install from PyPi. Choose one:
