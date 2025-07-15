@@ -49,60 +49,59 @@ Commands will print very little output, unless they fail or you add -v or --debu
 ### Pack/unpack tartanair scene locally. 
 Commands shown are for a single scene and video, remove --subset to do the full thing
 ```bash
-python -m cvdpack.main pack_dataset --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair.json --tmp_folder tmp/ --n_workers 20 --subset scene=abandonedfactory vid=P000 -v
+cvdpack pack_dataset --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair.json --tmp_folder tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
 
-python -m cvdpack.main unpack_dataset --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 20 --tmp_folder tmp/ --subset scene=abandonedfactory vid=P000 -v
+cvdpack unpack_dataset --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 10 --tmp_folder tmp/ --subset scene=abandonedfactory vid=P000 -v
 ```
 Runtimes are approx 31sec and 28sec respectively on a AMD EPYC 7713P 64-core machine.
 
 ### Pack/unpack all of TartanAir on a SLURM cluster 
 Commands shown work for princeton-vl's cluster, you will need to customize the paths and slurm args for own cluster.
 ```bash
-screen python -m cvdpack.main pack_dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+screen cvdpack pack_dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 
-screen python -m cvdpack.main unpack_dataset --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 100 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+screen cvdpack unpack_dataset --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
-Partially pack/unpack tartanair (e.g just npys -> pngs, or just pngs -> mkvs, or mkvs -> pngs, or pngs -> npys). These can be run in sequence. 
+### Partially pack/unpack tartanair (e.g just npys -> pngs, or just pngs -> mkvs, or mkvs -> pngs, or pngs -> npys). These can be run in sequence. 
 ```bash
-python -m cvdpack.main pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/  --steps quantize --n_workers 20 --cpus_per_worker 4 --config presets/tartanair.json
-python -m cvdpack.main pack_dataset --input data/TartanAir_partialpack/ --output data/TartanAir_pack/ --steps pack_video --n_workers 20 --cpus_per_worker 4
-python -m cvdpack.main unpack_dataset --input data/TartanAir_pack/ --output data/TartanAir_partialunpack/ --steps unpack_video --n_workers 20 --cpus_per_worker 4
-python -m cvdpack.main unpack_dataset --input data/TartanAir_partialunpack/ --output data/TartanAir_unpacked/ --steps unquantize --n_workers 20 --cpus_per_worker 4
+cvdpack pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/  --steps quantize --n_workers 10 --cpus_per_worker 4 --config presets/tartanair.json
+cvdpack pack_dataset --input data/TartanAir_partialpack/ --output data/TartanAir_pack/ --steps pack_video --n_workers 10 --cpus_per_worker 4
+cvdpack unpack_dataset --input data/TartanAir_pack/ --output data/TartanAir_partialunpack/ --steps unpack_video --n_workers 10 --cpus_per_worker 4
+cvdpack unpack_dataset --input data/TartanAir_partialunpack/ --output data/TartanAir_unpacked/ --steps unquantize --n_workers 10 --cpus_per_worker 4
 ```
 For a single scene (abandonedfactory/Hard/P000):
 - Runtimes are approx 34sec, 58sec, 12sec, 23sec respectively on a AMD EPYC 7713P 64-core machine.
 - Result sizes are approx TODO, TODO, TODO, TODO respectively.
 
-### Reorganize or split a dataset
-
-Reorganize format
+### Reorganize a dataset
 ```bash
-python -m cvdpack.main reorganize --input data/TartanAir/{scene}/{split}/{vid}/{gt_cam}/{frame:06d}_*.{ext} --output data/TartanAir_reorganized/{scene}/{split}_{vid}/{gt_cam}/{frame:04d}.{ext}
+cvdpack copy --input data/TartanAir/{scene}/{split}/{vid}/{gt}_{cam}/{frame:06d}_*.{ext} --output data/TartanAir_split/{scene}/{split}_{vid}/{cam}/{gt}/{frame:04d}.{ext}
 ```
 
-Reorganize and split
+### Extract a subset of a dataset
 ```bash
-python -m cvdpack.main reorganize --input data/TartanAir/{scene}/{split}/{vid}/{gt_cam}/{frame:06d}_*.{ext} --output data/TartanAir_split/{scene}/{split}_{vid}/{gt_cam}/{frame:04d}.{ext} --subset scene=abandonedfactory split=Hard vid=P000,P001 gt_cam=depth_left,image_left
+cvdpack copy --input data/TartanAir/{scene}/{split}/{vid}/{gt}_{cam}/{frame:06d}_*.{ext} --output data/TartanAir_split/{} --subset scene=abandonedfactory split=Hard vid=P000,P001 gt=image,depth cam=left
 ```
+Note: currently struggles to do the whole dataset for some dataset layouts e.g. TartanAir which stores many gt types in the same folder (flow and mask).
 
 Pack individual videos in TartanAir, step by step
 ```bash
 # pack depth/flow into pngs (quantization)
-python -m cvdpack.main pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/flow/{frame:06d}_{framenext:06d}_flow.npy --output pngs/flow/{frame:06d}.png --to_dtype uint16 --quantize_method LINEAR --min_orig_val -150 --max_orig_val 150
-python -m cvdpack.main pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/depth/{frame:06d}_left_depth.png --output pngs/depth/{frame:06d}_left_depth.png --to_dtype float32 --quantize_method INV --min_orig_val 0.5 --max_orig_val 1000 --out_of_bounds_method nan
+cvdpack pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/flow/{frame:06d}_{framenext:06d}_flow.npy --output pngs/flow/{frame:06d}.png --to_dtype uint16 --quantize_method LINEAR --min_orig_val -150 --max_orig_val 150
+cvdpack pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/depth/{frame:06d}_left_depth.png --output pngs/depth/{frame:06d}_left_depth.png --to_dtype float32 --quantize_method INV --min_orig_val 0.5 --max_orig_val 1000 --out_of_bounds_method nan
 
 # pack pngs into mkv (video compression)
-python -m cvdpack.main pack_frames --input pngs/flow/{frame:06d}.png --output vids/flow.mkv
-python -m cvdpack.main pack_frames --input pngs/depth/{frame:06d}_left_depth.png --output vids/depth.mkv
+cvdpack pack_frames --input pngs/flow/{frame:06d}.png --output vids/flow.mkv
+cvdpack pack_frames --input pngs/depth/{frame:06d}_left_depth.png --output vids/depth.mkv
 
 # unpack mkv back into png (video decompression)
-python -m cvdpack.main unpack_frames --input vids/flow.mkv --output pngs_unpacked/flow/{frame:06d}.png
-python -m cvdpack.main unpack_frames --input vids/depth.mkv --output pngs_unpacked/depth/{frame:06d}_left_depth.png
+cvdpack unpack_frames --input vids/flow.mkv --output pngs_unpacked/flow/{frame:06d}.png
+cvdpack unpack_frames --input vids/depth.mkv --output pngs_unpacked/depth/{frame:06d}_left_depth.png
 
 # unpack png into depth/flow npys (unquantization)
-python -m cvdpack.main unpack_frames --input pngs_unpacked/depth/{frame:06d}_left_depth.png --output unpack/depth/{frame:06d}_left_depth.npy --to_dtype float32 --quantize_method inv --min_orig_val 0.5 --max_orig_val 1000
-python -m cvdpack.main unpack_frames --input pngs_unpacked/flow/{frame:06d}.png --output unpack/flow/{frame:06d}_{framenext:06d}_flow.npy --to_dtype uint16 --quantize_method linear --min_orig_val -150 --max_orig_val 150
+cvdpack unpack_frames --input pngs_unpacked/depth/{frame:06d}_left_depth.png --output unpack/depth/{frame:06d}_left_depth.npy --to_dtype float32 --quantize_method inv --min_orig_val 0.5 --max_orig_val 1000
+cvdpack unpack_frames --input pngs_unpacked/flow/{frame:06d}.png --output unpack/flow/{frame:06d}_{framenext:06d}_flow.npy --to_dtype uint16 --quantize_method linear --min_orig_val -150 --max_orig_val 150
 ```
 
 ### Acknowledgement
@@ -112,9 +111,10 @@ This tool depends heavily on the incredible contributions of https://ffmpeg.org/
 ### TODO:
 
 Planned:
+- [ ] More presets/ .json files for common datasets
+- [ ] Add support for sintel/flyingthings .flo .disp .pfm etc
 - [ ] Allow pack resolution or res multiplier to be specified in config, enforce this during pack / unpack
 - [ ] Allow scp-style prefixes to input and/or output path, in which case we read/write from remotes in a streaming fashion
-- [ ] More presets/ .json files for common datasets
 
 No particular roadmap or intention to complete:
 - [ ] Provide a default dataloader which handles any cvdpack.json

@@ -547,18 +547,12 @@ def find_jobs(
         input_template_extra = None
 
     paths = match_template_paths(search_template)
+    paths, skipped_for_subset = filter_files_by_subset_dict(paths, subset)
 
     skipped_for_lazy = 0
-    skipped_for_subset = 0
     jobs = []
     for vid_info, vid_input_path in paths:
         vid_info["gt_type"] = gt_type
-
-        if subset is not None and not all(
-            k not in vid_info or vid_info[k] == v for k, v in subset.items()
-        ):
-            skipped_for_subset += 1
-            continue
 
         output_path = format_template(output_template, vid_info, allow_missing=[])
         if lazy and output_path.exists():
@@ -1089,7 +1083,7 @@ def parse_args():
             "unpack_frames",
             "pack_dataset",
             "unpack_dataset",
-            "reorganize",
+            "copy",
         ],
     )
     parser.add_argument("--input", type=Path, required=True)
@@ -1186,24 +1180,72 @@ def parse_args():
     return validate_args(parser.parse_args())
 
 
-def reorganize_files(
+def filter_files_by_subset_dict(
+    input_files: list[tuple[dict, Path]], subset: dict | None
+):
+    if subset is None:
+        return input_files, 0
+
+    def allowed(file_info: dict):
+        return all(
+            (
+                k not in file_info
+                or file_info[k] == v
+                or (isinstance(v, (list, set)) and file_info[k] in v)
+            )
+            for k, v in subset.items()
+        )
+
+    res = [
+        (file_info, file_path)
+        for file_info, file_path in input_files
+        if allowed(file_info)
+    ]
+    skipped = len(input_files) - len(res)
+
+    if len(res) == 0 and len(input_files) > 0:
+        logger.warning(
+            f"Filtering on {subset=} caused ALL {len(input_files)} files to be skipped"
+        )
+
+    return res, skipped
+
+
+def copy_files(
     input_template: Path,
     output_template: Path,
     subset: dict,
     loglevel: int,
 ):
-    logger.info(f"Reorganizing files from {input_template} to {output_template}")
-
-    if subset is not None and len(subset) > 0:
-        template_new = format_template(input_template, subset)
-        logger.info(
-            f"Using subset {subset=} to filter input template {input_template=} to {template_new=}"
-        )
-        input_template = template_new
+    # allow the user to specify no template for EITHER inp or out,
+    # in which case we just assume the templates are the same, e.g. for doing subsetting
+    match input_template.name == "{}", output_template.name == "{}":
+        case False, True:
+            input_rel = Path(*input_template.parts[len(output_template.parts) :])
+            logger.info(
+                f"{output_template=} was a folder, inferring template {output_template / input_rel} based on input"
+            )
+            output_template = output_template / input_rel
+        case True, False:
+            output_rel = Path(*output_template.parts[len(input_template.parts) :])
+            logger.info(
+                f"{input_template=} was a folder, inferring template {input_template / output_rel} based on output"
+            )
+            input_template = input_template / output_rel
+        case False, False:
+            pass
+        case _:
+            raise ValueError(
+                f"Invalid {input_template=} {output_template=}, cannot infer the dataset structure"
+            )
 
     input_files = list(match_template_paths(input_template))
+    input_files, skipped_for_subset = filter_files_by_subset_dict(input_files, subset)
+
     if len(input_files) == 0:
-        raise ValueError(f"No files found matching template: {input_template=}")
+        raise ValueError(
+            f"No files found matching template: {input_template=} for {subset=}"
+        )
 
     output_files = [
         format_template(output_template, file_info) for file_info, _ in input_files
@@ -1214,13 +1256,14 @@ def reorganize_files(
     uniq_out = set(output_files)
     if len(uniq_inp) != len(uniq_out):
         raise ValueError(
-            f"Reorganize from {input_template=} to {output_template=} is not one-to-one, got {len(uniq_inp)=} {len(uniq_out)=}"
+            f"copy from {input_template=} to {output_template=} is not one-to-one, got {len(uniq_inp)=} {len(uniq_out)=}"
         )
 
-    iter = zip(input_files, output_files)
+    items = zip(input_files, output_files)
     if loglevel <= logging.INFO:
-        iter = tqdm(iter, total=len(input_files))
-    for input_file_path, output_file_path in iter:
+        items = tqdm(items, total=len(input_files))
+
+    for input_file_path, output_file_path in items:
         output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.debug(f"Copying {input_file_path} -> {output_file_path}")
@@ -1333,8 +1376,8 @@ def main():
                 cpus_per_worker=args.cpus_per_worker,
                 loglevel=args.loglevel,
             )
-        case "reorganize", _:
-            reorganize_files(
+        case "copy", _:
+            copy_files(
                 args.input,
                 args.output,
                 subset=_parse_k_equals_v_strs(args.subset),
@@ -1343,7 +1386,7 @@ def main():
         case _:
             raise ValueError(f"Invalid {args.action=}")
 
-    if args.action == "reorganize" or config is None:
+    if args.action == "copy" or config is None:
         return
 
     if args.action == "pack_frames" and args.output.suffix == ".png":
