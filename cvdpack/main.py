@@ -261,6 +261,8 @@ def unpack_video(
     input_video_path: Path,
     output_frames_path_template: Path,
     ffmpeg: str = "ffmpeg",
+    n_cpus: int | None = None,
+    loglevel: int = None,
 ):
     logger.info(
         f"{unpack_video.__name__} {input_video_path=} to {output_frames_path_template=}"
@@ -271,11 +273,21 @@ def unpack_video(
         output_frames_path_template
     )
 
-    command = f"{ffmpeg} -y -hide_banner -i {input_video_path} {output_path_ffmpeg}"
+    ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
+    
+    if loglevel != logging.DEBUG and loglevel != logging.INFO:
+        ffmpeg_args.extend(["-loglevel", "error"])
+    
+    if n_cpus is not None:
+        ffmpeg_args.extend(["-threads", str(n_cpus)])
+    
+    ffmpeg_args.extend(["-i", str(input_video_path), output_path_ffmpeg])
+    
+    command = " ".join(ffmpeg_args)
     logger.info(
         f"Unpacking {input_video_path=} to {output_frames_path_template=}, {command=}"
     )
-    subprocess.check_output(command.split())
+    subprocess.check_output(ffmpeg_args)
 
     if "{framenext" in output_path_ffmpeg:
         for info, path in match_template_paths(output_frames_path_template):
@@ -288,6 +300,8 @@ def pack_video(
     input_frames_path: Path,
     output_video_path: Path,
     ffmpeg: str = "ffmpeg",
+    n_cpus: int | None = None,
+    loglevel: int = None,
 ):
     logger.info(f"{pack_video.__name__} {input_frames_path=} to {output_video_path=}")
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -305,9 +319,22 @@ def pack_video(
     input_frames_ffmpeg = _curlyframe_to_ffmpeg_frametemplate(
         input_frames_path, as_glob=True
     )
-    command = f"{ffmpeg} -y -hide_banner -pattern_type glob -i {input_frames_ffmpeg} {encoder_args} -pix_fmt {pix_fmt} -an {output_video_path}"
+    
+    ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
+    
+    if loglevel != logging.DEBUG and loglevel != logging.INFO:
+        ffmpeg_args.extend(["-loglevel", "error"])
+    
+    if n_cpus is not None:
+        ffmpeg_args.extend(["-threads", str(n_cpus)])
+    
+    ffmpeg_args.extend(["-pattern_type", "glob", "-i", input_frames_ffmpeg])
+    ffmpeg_args.extend(encoder_args.split())
+    ffmpeg_args.extend(["-pix_fmt", pix_fmt, "-an", str(output_video_path)])
+    
+    command = " ".join(ffmpeg_args)
     logger.info(f"Packing {input_frames_path=} to {output_video_path=}, {command=}")
-    subprocess.check_output(command.split())
+    subprocess.check_output(ffmpeg_args)
 
 
 def match_template_paths(
@@ -567,7 +594,7 @@ def process_video_job(job: dict):
 
     match input_path.suffix, output_path.suffix:
         case ".png", ".mkv":
-            pack_video(input_path, output_path)
+            pack_video(input_path, output_path, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
         case _, ".mkv":
             tmp_template = tmp_path / "{frame:06d}.png"
             pack_frameset(
@@ -581,9 +608,9 @@ def process_video_job(job: dict):
                 max_orig_val=float(job["config"]["max_orig_val"]),
                 out_of_bounds_method=job["config"]["out_of_bounds_method"],
             )
-            pack_video(tmp_template, output_path)
+            pack_video(tmp_template, output_path, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
         case ".mkv", ".png":
-            unpack_video(input_path, output_path)
+            unpack_video(input_path, output_path, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
         case '.png' | '.jpg' | '.jpeg' | '.npy', ".png":
             pack_frameset(
                 input_path,
@@ -609,7 +636,7 @@ def process_video_job(job: dict):
             )
         case ".mkv", _:
             tmp_frames = tmp_path / "{frame:06d}.png"
-            unpack_video(input_path, tmp_frames)
+            unpack_video(input_path, tmp_frames, n_cpus=job.get("cpus_per_worker"), loglevel=job.get("loglevel"))
             unpack_frameset(
                 tmp_frames,
                 output_path,
@@ -674,19 +701,19 @@ def execute_jobs(
     paralell_mode: Literal["multiprocess", "slurm", "none"],
     n_workers: int | None,
     slurm_args: list[str],
-    tmp_folder: Path,
+    cpus_per_worker: int | None = None,
 ):
     logger.info(f"Executing {len(jobs)} jobs with {paralell_mode=} {n_workers=}")
 
     if n_workers is None:
         for job in jobs:
-            process_video_job(job)
+            func(job)
         return
 
     match paralell_mode:
         case "multiprocess":
             with multiprocessing.Pool(n_workers) as pool:
-                pool.map(process_video_job, jobs)
+                pool.map(func, jobs)
         case "slurm":
             if submitit is None:
                 raise ValueError(
@@ -698,7 +725,7 @@ def execute_jobs(
             )
             executor.update_parameters(
                 slurm_mem_gb=4,
-                slurm_cpus_per_task=4,
+                slurm_cpus_per_task=cpus_per_worker or 4,
                 slurm_time=60,
                 slurm_array_parallelism=n_workers,
             )
@@ -710,7 +737,7 @@ def execute_jobs(
             crashed = []
             for i in range(0, len(jobs), SLURM_ARRAY_MAX):
                 launched = executor.map_array(
-                    process_video_job, jobs[i : i + SLURM_ARRAY_MAX]
+                    func, jobs[i : i + SLURM_ARRAY_MAX]
                 )
                 crashed += wait_jobs(launched, pbar)
             if len(crashed) > 0:
@@ -803,6 +830,8 @@ def pack_dataset(
     tmp_folder: Path,
     subset: list[str],
     lazy: bool,
+    cpus_per_worker: int | None = None,
+    loglevel: int = None,
 ):
     if config_path is None:
         config_path = input_folder / "cvdpack.json"
@@ -826,7 +855,7 @@ def pack_dataset(
                 output_template=output_template,
                 gt_type=gt_type,
                 subset=subset,
-                extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf},
+                extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf, "cpus_per_worker": cpus_per_worker, "loglevel": loglevel},
                 lazy=lazy,
                 match_video_folder=True,
             )
@@ -850,7 +879,7 @@ def pack_dataset(
         paralell_mode=paralell_mode,
         n_workers=n_workers,
         slurm_args=slurm_args,
-        tmp_folder=tmp_folder,
+        cpus_per_worker=cpus_per_worker,
     )
 
 
@@ -865,6 +894,8 @@ def unpack_dataset(
     subset: list[str],
     tmp_folder: Path,
     lazy: bool,
+    cpus_per_worker: int | None = None,
+    loglevel: int = None,
 ):
     if config_path is None:
         config_path = input_folder / "cvdpack.json"
@@ -887,7 +918,7 @@ def unpack_dataset(
                 input_template=search_input_template,
                 output_template=search_output_template,
                 subset=subset,
-                extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf},
+                extra_job_args={"tmp_folder": tmp_folder, "config": datatype_conf, "cpus_per_worker": cpus_per_worker, "loglevel": loglevel},
                 lazy=lazy,
                 match_video_folder=True,
             )
@@ -900,7 +931,7 @@ def unpack_dataset(
         paralell_mode=paralell_mode,
         n_workers=n_workers,
         slurm_args=slurm_args,
-        tmp_folder=tmp_folder,
+        cpus_per_worker=cpus_per_worker,
     )
 
 
@@ -977,6 +1008,9 @@ def parse_args():
         "--n_workers", type=int, default=None, help="Number of jobs to run in parallel."
     )
     parser.add_argument(
+        "--cpus_per_worker", type=int, default=None, help="Number of CPUs per worker for slurm and ffmpeg threads."
+    )
+    parser.add_argument(
         "--subset",
         type=str,
         nargs="?",
@@ -1046,6 +1080,8 @@ def main():
             pack_video(
                 args.input,
                 args.output,
+                n_cpus=args.cpus_per_worker,
+                loglevel=args.loglevel,
             )
         case "unpack_frames", ".png":
             unpack_frameset(
@@ -1060,6 +1096,8 @@ def main():
             unpack_video(
                 args.input,
                 args.output,
+                n_cpus=args.cpus_per_worker,
+                loglevel=args.loglevel,
             )
         case "pack_dataset", _:
             if not args.input.is_dir():
@@ -1075,6 +1113,8 @@ def main():
                 args.tmp_folder,
                 args.subset,
                 args.lazy,
+                args.cpus_per_worker,
+                args.loglevel,
             )
         case "unpack_dataset", _:
             if not args.input.is_dir():
@@ -1090,6 +1130,8 @@ def main():
                 args.subset,
                 args.tmp_folder,
                 args.lazy,
+                args.cpus_per_worker,
+                args.loglevel,
             )
         case _:
             raise ValueError(f"Invalid {args.action=}")
