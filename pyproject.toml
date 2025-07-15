@@ -1,17 +1,12 @@
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "cvdpack"
 version = "0.0.1"
-description = "Add your description here"
+description = "Quantize and video-compress your RGB/Depth/Flow/SurfaceNormal datasets"
 readme = "README.md"
 authors = [
     { name = "Alexander Raistrick", email = "araistrick@princeton.edu" }
 ]
 
-description = "Quantize and video-compress your RGB/Depth/Flow/SurfaceNormal datasets"
 keywords = [
     "computer vision",
     "datasets"
@@ -26,6 +21,9 @@ dependencies = [
     "opencv-python",
     "tqdm"
 ]
+
+[project.scripts]
+cvdpack = "cvdpack.main:main"
 
 [project.optional-dependencies]
 slurm = [
