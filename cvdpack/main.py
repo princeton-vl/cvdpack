@@ -250,14 +250,10 @@ def quantize_frame(
 
 def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False):
     newname = re.sub(
-        r"\{frame:(0\d+)d\}",  # e.g. {frame:06d}
+        r"\{frame.*:(0\d+)d\}",  # e.g. {frame:06d} or {framenext:06d}
         lambda m: "*" if as_glob else f"%{m.group(1)}d",
         input_path.name,
     )
-    if "{" in newname:
-        raise ValueError(
-            f"Input frames path  must not contain templates besides {{frame}}, got {input_path=}"
-        )
     return str(input_path.parent / newname)
 
 
@@ -280,6 +276,12 @@ def unpack_video(
         f"Unpacking {input_video_path=} to {output_frames_path_template=}, {command=}"
     )
     subprocess.check_output(command.split())
+
+    if "{framenext" in output_path_ffmpeg:
+        for info, path in match_template_paths(output_frames_path_template):
+            info["framenext"] = info["frame"] + 1
+            next_path = format_template(output_frames_path_template, info)
+            shutil.move(path, next_path)
 
 
 def pack_video(
