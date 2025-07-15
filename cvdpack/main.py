@@ -158,9 +158,8 @@ def img_quant_to_orig(
     quantize_method: QuantizeMethod,
     unpack_channels_last: int | None = None,
 ) -> np.ndarray:
-    from_dtype = img.dtype
-    assert np.issubdtype(from_dtype, np.unsignedinteger), f"{from_dtype=}"
-    from_max = np.iinfo(from_dtype).max
+    assert np.issubdtype(img.dtype, np.unsignedinteger), f"{img.dtype=}"
+    from_max = np.iinfo(img.dtype).max - 1  # exact maxint val is used for nan
 
     match quantize_method:
         case QuantizeMethod.CHECKBOUNDS:
