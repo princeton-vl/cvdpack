@@ -105,22 +105,18 @@ python -m cvdpack.main unpack_frames --input pngs_unpacked/depth/{frame:06d}_lef
 python -m cvdpack.main unpack_frames --input pngs_unpacked/flow/{frame:06d}.png --output unpack/flow/{frame:06d}_{framenext:06d}_flow.npy --to_dtype uint16 --quantize_method linear --min_orig_val -150 --max_orig_val 150
 ```
 
-Infinigen video scene
-```
-```
-
-### User Guide
-
 ### Acknowledgement
 
 This tool depends heavily on the incredible contributions of https://ffmpeg.org/ and https://opencv.org/
 
-### Hypothetical TODOs:
+### TODO:
 
-I have no particular intention to continue adding features to this project. 
-
-However, potential ideas would include:
+Planned:
+- [ ] Allow pack resolution or res multiplier to be specified in config, enforce this during pack / unpack
 - [ ] Allow scp-style prefixes to input and/or output path, in which case we read/write from remotes in a streaming fashion
+- [ ] More presets/ .json files for common datasets
+
+No particular roadmap or intention to complete:
 - [ ] Provide a default dataloader which handles any cvdpack.json
     - [ ] Load from png version of the dataset
     - [ ] Load from mkv version of the dataset ??
@@ -128,4 +124,4 @@ However, potential ideas would include:
 - [ ] Pack non-video framesets as compressed&chunked h5 (?) arrays
 - [ ] Store stereo datasets efficiently by storing only left-frame info + sparse rightframe info
 - [ ] Sbatch script which loads a dataset for you on job startup
-- [ ] Dataloader which handles png->npy unpacking at runtime based on json config
+- [ ] Dataloader which handles png->npy unpacking at runtime, with mapping based on json config
