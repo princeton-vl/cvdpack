@@ -34,7 +34,14 @@ except ImportError:
 
 logger = logging.getLogger("cvdpack")
 
-SLURM_ARRAY_MAX = 500
+ENVIRON_KEYS = {
+    "array_max": "CVDPACK_SLURM_ARRAY_MAX",
+    "ffmpeg": "CVDPACK_FFMPEG",
+    "ffv1_args": "CVDPACK_FFV1_ARGS",
+    "libx265_args": "CVDPACK_LIBX265_ARGS",
+}
+
+SLURM_ARRAY_MAX = int(os.environ.get(ENVIRON_KEYS["array_max"], 500))
 
 PARALELL_LEVELS = [
     "scene",
@@ -56,10 +63,12 @@ DTYPE_MAP = {
 
 ENCODER_ARGS = {
     "ffv1": os.environ.get(
-        "CVDPACK_FFV1_ARGS", "-c:v ffv1 -level 3 -g 1 -slices 4 -threads 4 -slicecrc 1"
+        ENVIRON_KEYS["ffv1_args"],
+        "-c:v ffv1 -level 3 -g 1 -slices 4 -threads 4 -slicecrc 1",
     ),
     "libx265": os.environ.get(
-        "CVDPACK_LIBX265_ARGS", "-c:v libx265 -x265-params lossless=1 -preset slow"
+        ENVIRON_KEYS["libx265_args"],
+        "-c:v libx265 -x265-params lossless=1 -preset slow",
     ),
 }
 
@@ -862,6 +871,9 @@ def execute_jobs(
                 slurm_array_parallelism=n_workers,
             )
             if slurm_args is not None:
+                logger.debug(f"Updating slurm args: {slurm_args=}")
+                if isinstance(n := slurm_args.get("slurm_nodelist"), list):
+                    slurm_args["slurm_nodelist"] = ",".join(n)
                 executor.update_parameters(**slurm_args)
 
             pbar = tqdm(total=len(jobs), desc="Running jobs")
@@ -1116,6 +1128,13 @@ def validate_args(args: argparse.Namespace):
                 "Please install ffmpeg and ensure it's available in your PATH."
             )
 
+    if args.parallel_mode == "slurm" and args.n_workers > SLURM_ARRAY_MAX:
+        logger.warning(
+            f"Requested {args.n_workers=} but only {SLURM_ARRAY_MAX=} can actually be used."
+            f"This is because many clusters often limit arrays to 1000 jobs, but the job array e.g. for tartanair is 3000+. "
+            f"Set {ENVIRON_KEYS['array_max']} to a larger value if this is appropriate forr your cluster"
+        )
+
     return args
 
 
@@ -1229,12 +1248,15 @@ def parse_args():
 def included_in_filter(
     file_keys: dict,
     filter_vals: dict | None,
+    allow_extra: set[str] | None = None,
 ) -> bool:
     if filter_vals is None:
         return False
 
     first_keys = set(file_keys.keys())
     extra = set(filter_vals.keys()) - first_keys
+    if allow_extra is not None:
+        extra -= allow_extra
     if extra:
         raise ValueError(
             f"{filter_vals=} had keys {extra} which are not present in the input file template. "
@@ -1397,9 +1419,9 @@ def main():
                 args.steps,
                 config,
                 args.parallel_mode,
-                args.slurm_args,
-                args.n_workers,
-                args.tmp_folder,
+                slurm_args=_parse_k_equals_v_strs(args.slurm_args),
+                n_workers=args.n_workers,
+                tmp_folder=args.tmp_folder,
                 subset=_parse_k_equals_v_strs(args.subset),
                 lazy=args.lazy,
                 cpus_per_worker=args.cpus_per_worker,
@@ -1416,10 +1438,10 @@ def main():
                 args.steps,
                 config,
                 args.parallel_mode,
-                args.slurm_args,
-                args.n_workers,
-                subset=_parse_k_equals_v_strs(args.subset),
+                slurm_args=_parse_k_equals_v_strs(args.slurm_args),
+                n_workers=args.n_workers,
                 tmp_folder=args.tmp_folder,
+                subset=_parse_k_equals_v_strs(args.subset),
                 lazy=args.lazy,
                 cpus_per_worker=args.cpus_per_worker,
                 loglevel=args.loglevel,
