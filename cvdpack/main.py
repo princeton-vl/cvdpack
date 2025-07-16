@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import time
+import tarfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -104,16 +105,16 @@ PROPS_TO_ENCODER_PIXFMT = {
 }
 
 
-def load_any_image(path, allow_pickle=False):
+def load_any_image(path: Path, allow_pickle: bool = False):
     match path.suffix:
         case ".png" | ".jpg" | ".jpeg":
             return cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-        case ".exr":
-            raise NotImplementedError(f"Unhandled {path.suffix=} for {path=}")
         case ".npy":
             return np.load(path, allow_pickle=allow_pickle)
         case ".npz":
             return dict(np.load(path, allow_pickle=allow_pickle))
+        case ".exr":
+            return cv2.imread(str(path), cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
         case _:
             raise ValueError(f"Unhandled {path.suffix=} for {path=}")
 
@@ -379,6 +380,29 @@ def pack_video(
     subprocess.check_output(ffmpeg_args)
 
     return command
+
+def pack_tarball(
+    input_frames_template: Path, 
+    output_tarball_path: Path
+):
+    logger.info(f"{pack_tarball.__name__} {input_frames_template=} to {output_tarball_path=}")
+    output_tarball_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with tarfile.open(output_tarball_path, "w:gz") as tar:
+        for frame_info, frame_input_path in match_template_paths(input_frames_template):
+            output_path = format_template(output_tarball_path, frame_info)
+            tar.add(frame_input_path, arcname=output_path.name)
+
+def unpack_tarball(
+    input_tarball_path: Path, 
+    output_frames_path_template: Path,
+):
+    logger.info(f"{unpack_tarball.__name__} {input_tarball_path=} to {output_frames_path_template=}")
+    output_frames_path_template.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(input_tarball_path, "r:gz") as tar:
+        for member in tar.getmembers():
+            if member.isfile():
+                tar.extract(member, output_frames_path_template.parent)
 
 
 def match_template_paths(
@@ -705,6 +729,8 @@ def _process_video(
                 loglevel=job.loglevel,
             )
             metadata_commands.append(command)
+        case _, ".tar.gz":
+            pack_tarball(input_path, output_path)
         case ".mkv", ".png":
             command = unpack_video(
                 input_path,
@@ -751,6 +777,8 @@ def _process_video(
                 unpack_channels_last=job.config.get("unpack_channels_last", None),
             )
             metadata_commands.append(command)
+        case ".tar.gz", _:
+            unpack_tarball(input_path, output_path)
         case ".txt", ".npy":
             data = np.loadtxt(input_path)
             assert "{" not in str(output_path), output_path
@@ -828,7 +856,7 @@ def wait_jobs(launched_jobs, pbar):
 
             try:
                 result = j.result()
-                msg = f"Job {j.job_id} completed successfully with {result=}"
+                msg = f"Job {j.job_id} completed successfully"
             except Exception as e:
                 msg = f"Job {j.job_id} failed with error: {e}"
                 logger.error(msg)

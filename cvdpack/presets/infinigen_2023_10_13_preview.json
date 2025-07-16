@@ -1,0 +1,218 @@
+{
+    "metadata": {},
+    "data_types": {
+        "Image": {
+            "original_path_template": "{scene}/frames/camera_{cam}/Image_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "pack_dtype": "uint8",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "ImageExr": {
+            "original_path_template": "{scene}/frames/camera_{cam}/Image_{cam}_{frame:04d}_{cam}.exr",
+            "packed_path_template": "{scene}/frames/{gt_type}_exr_camera_{cam}.tar.gz",
+            "quantize_method": "NONE"
+        },
+        "Depth": {
+            "original_path_template": "{scene}/frames/camera_{cam}/Depth_{cam}_{frame:04d}_{cam}.npy",
+            "packed_path_template": "{scene}/frames/{gt_type}_npy_camera_{cam}.mkv",
+            "unpack_dtype": "float32",
+            "min_orig_val": 0.05,
+            "max_orig_val": 4000,
+            "pack_dtype": "uint16",
+            "quantize_method": "INV",
+            "out_of_bounds_method": "nan"
+        },
+        "SurfaceNormal": {
+            "original_path_template": "{scene}/frames/camera_{cam}/SurfaceNormal_{cam}_{frame:04d}_{cam}.npy",
+            "packed_path_template": "{scene}/frames/{gt_type}_npy_camera_{cam}.mkv",
+            "unpack_dtype": "float32",
+            "min_orig_val": -1,
+            "max_orig_val": 1,
+            "pack_dtype": "uint16",
+            "quantize_method": "LINEAR",
+            "out_of_bounds_method": "nan"
+        },
+        "Flow3D": {
+            "original_path_template": "{scene}/frames/camera_{cam}/Flow3D_{cam}_{frame:04d}_{cam}.npy",
+            "packed_path_template": "{scene}/frames/{gt_type}_npy_camera_{cam}.mkv",
+            "unpack_dtype": "float32",
+            "min_orig_val": -200,
+            "max_orig_val": 200,
+            "pack_dtype": "uint16",
+            "quantize_method": "LINEAR",
+            "out_of_bounds_method": "nan_warn"
+        },
+        "Flow3DMask": {
+            "original_path_template": "{scene}/frames/camera_{cam}/Flow3DMask_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "ObjectSegmentation": {
+            "original_path_template": "{scene}/frames/camera_{cam}/ObjectSegmentation_{cam}_{frame:04d}_{cam}.npz",
+            "packed_path_template": "{scene}/frames/{gt_type}_npz_camera_{cam}.tar.gz",
+            "unpack_dtype": "uint16",
+            "min_orig_val": 0,
+            "max_orig_val": 65535,
+            "pack_dtype": "uint16",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "OcclusionBoundaries": {
+            "original_path_template": "{scene}/frames/camera_{cam}/OcclusionBoundaries_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "AO": {
+            "original_path_template": "{scene}/frames/camera_{cam}/AO_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "DiffCol": {
+            "original_path_template": "{scene}/frames/{gt_type}/camera_{cam}/DiffCol_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "DiffuseDir": {
+            "original_path_template": "{scene}/frames/camera_{cam}/DiffDir_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{scene}_{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "DiffInd": {
+            "original_path_template": "{scene}/frames/camera_{cam}/DiffInd_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "GlossCol": {
+            "original_path_template": "{scene}/frames/camera_{cam}/GlossCol_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "GlossDir": {
+            "original_path_template": "{scene}/frames/camera_{cam}/GlossDir_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "GlossInd": {
+            "original_path_template": "{scene}/frames/camera_{cam}/GlossInd_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "TransCol": {
+            "original_path_template": "{scene}/frames/camera_{cam}/TransCol_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "TransDir": {
+            "original_path_template": "{scene}/frames/camera_{cam}/TransDir_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "TransInd": {
+            "original_path_template": "{scene}/frames/camera_{cam}/TransInd_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "Emit": {
+            "original_path_template": "{scene}/frames/camera_{cam}/Emit_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "Env": {
+            "original_path_template": "{scene}/frames/camera_{cam}/Env_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "VolumeDir": {
+            "original_path_template": "{scene}/frames/{gt_type}/camera_{cam}/VolumeDir_{cam}_{frame:04d}_{cam}.png",
+            "packed_path_template": "{scene}/frames/{gt_type}_png_camera_{cam}.mkv",
+            "unpack_dtype": "uint8",
+            "min_orig_val": 0,
+            "max_orig_val": 255,
+            "pack_dtype": "uint8",
+            "quantize_method": "CHECKBOUNDS",
+            "out_of_bounds_method": "error"
+        },
+        "camview": {
+            "original_path_template": "{scene}/frames/camera_{cam}/camview_{cam}_{frame:04d}_{cam}.npz",
+            "packed_path_template": "{scene}/frames/{gt_type}_npz_camera_{cam}.tar.gz"
+        },
+        "Objects": {
+            "original_path_template": "{scene}/frames/camera_{cam}/Objects_{cam}_{frame:04d}_{cam}.json",
+            "packed_path_template": "{scene}/frames/{gt_type}_json_camera_{cam}.tar.gz"
+        }
+    }
+}
