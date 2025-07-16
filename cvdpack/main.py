@@ -516,17 +516,17 @@ def format_template(
     template: Path,
     vals: dict,
     allow_missing: list[str] | None = None,
-    return_updated_subset: bool = False,
-):
+    return_matched: bool = False,
+) -> Path | tuple[Path, dict]:
     """
     Args:
         template: Path or str, must contain {field} or {field:...d} style template strings
         vals: dict, keys must match the {field} strings
         allow_missing: list[str] | None - if provided, keys in the template but not in this list will raise an error
-        return_updated_subset: bool - if True, return the subset of `vals` that was not used
+        return_matched: bool - if True, return the matched keys
     """
 
-    matched = []
+    matched = set()
 
     def replace_func(match):
         full_spec = match.group(1)
@@ -534,11 +534,15 @@ def format_template(
         if key in vals:
             try:
                 res = ("{" + full_spec + "}").format(**{key: vals[key]})
-                matched.append(key)
+                matched.add(key)
                 return res
             except ValueError as e:
                 raise ValueError(
                     f"Invalid {full_spec=} for {key=} {vals[key]=} in {template=}, {e=}"
+                ) from e
+            except KeyError as e:
+                raise ValueError(
+                    f"Missing {key=} in {vals=} for {template=}, {allow_missing=}"
                 ) from e
         elif allow_missing and key not in allow_missing:
             raise ValueError(
@@ -552,10 +556,10 @@ def format_template(
     if isinstance(template, Path):
         res = Path(res)
 
-    logger.debug(f"{format_template.__name__} {template=} -> {res=}")
+    logger.debug(f"{format_template.__name__} {template=} -> {res=}, {matched=}")
 
-    if return_updated_subset:
-        return res, {k: vals[k] for k in vals if k not in matched}
+    if return_matched:
+        return res, matched
     return res
 
 
@@ -583,8 +587,8 @@ def find_jobs(
     if subset is None:
         subset = {}
     subset["gt_type"] = gt_type
-    input_template, subset = format_template(
-        input_template, subset, return_updated_subset=True
+    input_template, matched_keys = format_template(
+        input_template, subset, return_matched=True
     )
 
     if match_video_folder and "{frame" in input_template.parts[-1]:
@@ -599,7 +603,11 @@ def find_jobs(
     skipped_for_lazy = 0
     jobs = []
     for vid_info, vid_input_path in paths:
-        if subset and not included_in_filter(vid_info, subset):
+        vid_info["gt_type"] = gt_type
+
+        if subset and not included_in_filter(
+            vid_info, subset, allow_extra=matched_keys
+        ):
             continue
 
         output_path = format_template(output_template, vid_info, allow_missing=[])
