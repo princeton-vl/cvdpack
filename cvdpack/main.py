@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from string import Formatter
@@ -290,7 +291,7 @@ def unpack_video(
     output_frames_path_template: Path,
     ffmpeg: str = "ffmpeg",
     n_cpus: int | None = None,
-    loglevel: int = None,
+    loglevel: int | None = None,
 ):
     logger.info(
         f"{unpack_video.__name__} {input_video_path=} to {output_frames_path_template=}"
@@ -331,7 +332,7 @@ def pack_video(
     output_video_path: Path,
     ffmpeg: str = "ffmpeg",
     n_cpus: int | None = None,
-    loglevel: int = None,
+    loglevel: int | None = None,
 ):
     logger.info(f"{pack_video.__name__} {input_frames_path=} to {output_video_path=}")
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -405,7 +406,7 @@ def match_template_paths(
         if not field:
             continue
 
-        if conv.endswith("d"):
+        if isinstance(conv, str) and conv.endswith("d"):
             parts.append(rf"(?P<{field}>\d+)")
         else:
             parts.append(rf"(?P<{field}>[^/\\]+)")
@@ -558,15 +559,27 @@ def format_template(
     return res
 
 
+@dataclass
+class Job:
+    input_path: Path
+    output_path: Path
+    gt_type: str
+    subset: dict
+    tmp_folder: Path
+    config: dict
+    cpus_per_worker: int
+    loglevel: int
+
+
 def find_jobs(
     input_template: Path,
     output_template: Path,
     gt_type: str,
     subset: dict | None,
-    extra_job_args: dict,
+    job_defaults: dict,
     match_video_folder: bool = False,
     lazy: bool = False,
-) -> list[dict]:
+) -> list[Job]:
     if subset is None:
         subset = {}
     subset["gt_type"] = gt_type
@@ -598,13 +611,12 @@ def find_jobs(
             extra = format_template(input_template_extra, vid_info)
             vid_input_path = vid_input_path / extra
 
-        jobs.append(
-            {
-                "input_path": vid_input_path,
-                "output_path": output_path,
-                **extra_job_args,
-            }
+        job = Job(
+            input_path=vid_input_path,
+            output_path=output_path,
+            **job_defaults,
         )
+        jobs.append(job)
 
     if len(jobs) == 0 and skipped_for_lazy == 0:
         raise ValueError(f"No jobs found for {input_template}")
@@ -636,7 +648,7 @@ def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
 def _process_video(
     input_path: Path,
     output_path: Path,
-    job: dict,
+    job: Job,
     make_tmp_folder: Callable,
 ):
     metadata_commands = []
@@ -646,8 +658,8 @@ def _process_video(
             command = pack_video(
                 input_path,
                 output_path,
-                n_cpus=job.get("cpus_per_worker"),
-                loglevel=job.get("loglevel"),
+                n_cpus=job.cpus_per_worker,
+                loglevel=job.loglevel,
             )
             metadata_commands.append(command)
         case _, ".mkv":
@@ -655,52 +667,46 @@ def _process_video(
             pack_frameset(
                 input_path,
                 tmp_template,
-                to_dtype=DTYPE_MAP[job["config"]["pack_dtype"]],
-                quantize_method=QuantizeMethod.from_str(
-                    job["config"]["quantize_method"]
-                ),
-                min_orig_val=float(job["config"]["min_orig_val"]),
-                max_orig_val=float(job["config"]["max_orig_val"]),
-                out_of_bounds_method=job["config"]["out_of_bounds_method"],
+                to_dtype=DTYPE_MAP[job.config["pack_dtype"]],
+                quantize_method=QuantizeMethod.from_str(job.config["quantize_method"]),
+                min_orig_val=float(job.config["min_orig_val"]),
+                max_orig_val=float(job.config["max_orig_val"]),
+                out_of_bounds_method=job.config["out_of_bounds_method"],
             )
             command = pack_video(
                 tmp_template,
                 output_path,
-                n_cpus=job.get("cpus_per_worker"),
-                loglevel=job.get("loglevel"),
+                n_cpus=job.cpus_per_worker,
+                loglevel=job.loglevel,
             )
             metadata_commands.append(command)
         case ".mkv", ".png":
             command = unpack_video(
                 input_path,
                 output_path,
-                n_cpus=job.get("cpus_per_worker"),
-                loglevel=job.get("loglevel"),
+                n_cpus=job.cpus_per_worker,
+                loglevel=job.loglevel,
             )
             metadata_commands.append(command)
         case ".png" | ".jpg" | ".jpeg" | ".npy", ".png":
             pack_frameset(
                 input_path,
                 output_path,
-                to_dtype=DTYPE_MAP[job["config"]["pack_dtype"]],
-                quantize_method=QuantizeMethod.from_str(
-                    job["config"]["quantize_method"]
-                ),
-                min_orig_val=float(job["config"]["min_orig_val"]),
-                max_orig_val=float(job["config"]["max_orig_val"]),
-                out_of_bounds_method=job["config"]["out_of_bounds_method"],
+                to_dtype=DTYPE_MAP[job.config["pack_dtype"]],
+                quantize_method=QuantizeMethod.from_str(job.config["quantize_method"]),
+                min_orig_val=float(job.config["min_orig_val"]),
+                max_orig_val=float(job.config["max_orig_val"]),
+                out_of_bounds_method=job.config["out_of_bounds_method"],
             )
         case ".png", _:
             unpack_frameset(
                 input_path,
                 output_path,
-                to_dtype=DTYPE_MAP[job["config"]["unpack_dtype"]],
-                quantize_method=QuantizeMethod.from_str(
-                    job["config"]["quantize_method"]
-                ),
-                min_orig_val=float(job["config"]["min_orig_val"]),
-                max_orig_val=float(job["config"]["max_orig_val"]),
-                unpack_channels_last=job["config"].get("unpack_channels_last", None),
+                to_dtype=DTYPE_MAP[job.config["unpack_dtype"]],
+                quantize_method=QuantizeMethod.from_str(job.config["quantize_method"]),
+                min_orig_val=float(job.config["min_orig_val"]),
+                max_orig_val=float(job.config["max_orig_val"]),
+                unpack_channels_last=job.config.get("unpack_channels_last", None),
             )
         case ".mkv", _:
             tmp_frames = make_tmp_folder() / "{frame:06d}.png"
@@ -713,13 +719,11 @@ def _process_video(
             unpack_frameset(
                 tmp_frames,
                 output_path,
-                to_dtype=DTYPE_MAP[job["config"]["unpack_dtype"]],
-                quantize_method=QuantizeMethod.from_str(
-                    job["config"]["quantize_method"]
-                ),
-                min_orig_val=float(job["config"]["min_orig_val"]),
-                max_orig_val=float(job["config"]["max_orig_val"]),
-                unpack_channels_last=job["config"].get("unpack_channels_last", None),
+                to_dtype=DTYPE_MAP[job.config["unpack_dtype"]],
+                quantize_method=QuantizeMethod.from_str(job.config["quantize_method"]),
+                min_orig_val=float(job.config["min_orig_val"]),
+                max_orig_val=float(job.config["max_orig_val"]),
+                unpack_channels_last=job.config.get("unpack_channels_last", None),
             )
             metadata_commands.append(command)
         case ".txt", ".npy":
@@ -740,15 +744,15 @@ def _process_video(
     return metadata_commands
 
 
-def process_video_job(job: dict):
-    input_path = Path(job["input_path"])
-    output_path = Path(job["output_path"])
+def process_video_job(job: Job):
+    input_path = job.input_path
+    output_path = job.output_path
 
     tmp_path = None
 
     # we create the tmp_folder conditionally, so that we only throw for tmp_folder None if the job actually needed a tmp_folder
     def make_tmp_folder():
-        tmp_folder = job["tmp_folder"]
+        tmp_folder = job.tmp_folder
         out_str = str(output_path)
         out_str = (
             out_str.replace("{", "")
@@ -968,7 +972,7 @@ def pack_dataset(
     subset: dict | None,
     lazy: bool,
     cpus_per_worker: int | None = None,
-    loglevel: int = None,
+    loglevel: int | None = None,
 ):
     if config is None:
         raise ValueError(
@@ -986,18 +990,22 @@ def pack_dataset(
             "pack",
         )
 
+        job_defaults = dict(
+            gt_type=gt_type,
+            subset=subset,
+            tmp_folder=tmp_folder,
+            config=datatype_conf,
+            cpus_per_worker=cpus_per_worker,
+            loglevel=loglevel,
+        )
+
         jobs.extend(
             find_jobs(
                 input_template=input_template,
                 output_template=output_template,
                 gt_type=gt_type,
                 subset=subset,
-                extra_job_args={
-                    "tmp_folder": tmp_folder,
-                    "config": datatype_conf,
-                    "cpus_per_worker": cpus_per_worker,
-                    "loglevel": loglevel,
-                },
+                job_defaults=job_defaults,
                 lazy=lazy,
                 match_video_folder=True,
             )
@@ -1026,7 +1034,7 @@ def unpack_dataset(
     tmp_folder: Path,
     lazy: bool,
     cpus_per_worker: int | None = None,
-    loglevel: int = None,
+    loglevel: int | None = None,
 ):
     if config is None:
         raise ValueError(
@@ -1044,18 +1052,22 @@ def unpack_dataset(
             mode="unpack",
         )
 
+        job_defaults = dict(
+            gt_type=gt_type,
+            subset=subset,
+            tmp_folder=tmp_folder,
+            config=datatype_conf,
+            cpus_per_worker=cpus_per_worker,
+            loglevel=loglevel,
+        )
+
         jobs.extend(
             find_jobs(
                 input_template=search_input_template,
                 output_template=search_output_template,
                 gt_type=gt_type,
                 subset=subset,
-                extra_job_args={
-                    "tmp_folder": tmp_folder,
-                    "config": datatype_conf,
-                    "cpus_per_worker": cpus_per_worker,
-                    "loglevel": loglevel,
-                },
+                job_defaults=job_defaults,
                 lazy=lazy,
                 match_video_folder=True,
             )
