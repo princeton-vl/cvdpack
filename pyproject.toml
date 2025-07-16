@@ -34,6 +34,10 @@ cvdpack = "cvdpack.main:main"
 slurm = [
     "submitit"
 ]
+dev = [
+    "ruff",
+    "matplotlib"
+]
 
 [build-system]
 # based on https://github.com/astral-sh/trusted-publishing-examples/blob/main/pyproject.toml
