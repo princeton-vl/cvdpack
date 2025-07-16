@@ -593,8 +593,14 @@ def find_jobs(
     match_video_folder: bool = False,
     lazy: bool = False,
 ) -> list[Job]:
+    
     if subset is None:
         subset = {}
+    elif "gt_type" in subset and subset["gt_type"] != gt_type:
+        return []
+
+    logger.debug(f"{find_jobs.__name__} {input_template=} {output_template=} {gt_type=} {subset=} {job_defaults=}")
+
     subset["gt_type"] = gt_type
     input_template, matched_keys = format_template(
         input_template, subset, return_matched=True
@@ -612,12 +618,14 @@ def find_jobs(
     skipped_for_lazy = 0
     jobs = []
     for vid_info, vid_input_path in paths:
-        vid_info["gt_type"] = gt_type
+    
 
         if subset and not included_in_filter(
             vid_info, subset, allow_extra=matched_keys
         ):
             continue
+
+        vid_info.update(subset)
 
         output_path = format_template(output_template, vid_info, allow_missing=[])
         if lazy and output_path.exists():
@@ -730,8 +738,8 @@ def _process_video(
             command = unpack_video(
                 input_path,
                 tmp_frames,
-                n_cpus=job.get("cpus_per_worker"),
-                loglevel=job.get("loglevel"),
+                n_cpus=job.cpus_per_worker,
+                loglevel=job.loglevel,
             )
             unpack_frameset(
                 tmp_frames,
