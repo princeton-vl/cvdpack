@@ -18,7 +18,7 @@ import time
 from enum import Enum
 from pathlib import Path
 from string import Formatter
-from typing import Callable, Literal
+from typing import Callable, Generator, Literal
 
 import cv2
 import numpy as np
@@ -374,11 +374,20 @@ def pack_video(
 def match_template_paths(
     template: Path,
     match_video_folder: bool = False,
-) -> list[tuple[dict, Path]]:
-    parts = template.parts
-    first_curlypart = next((i for i, p in enumerate(parts) if "{" in p), None)
-    child_template = "/".join(parts[first_curlypart:])
-    search_folder = Path("/".join(parts[:first_curlypart]))
+) -> Generator[tuple[dict, Path], None, None]:
+    first_curlypart = next((i for i, p in enumerate(template.parts) if "{" in p), None)
+    if first_curlypart is None:
+        if template.exists():
+            yield ({}, template)
+            return
+        raise ValueError(f"{template=} has no {{}}. Nothing to match?")
+    child_template = "/".join(template.parts[first_curlypart:])
+    search_folder = Path(*template.parts[:first_curlypart])
+
+    if not search_folder.exists():
+        raise ValueError(
+            f"{child_template=} has base {search_folder=} which does not exist"
+        )
 
     fmt = Formatter()
 
@@ -502,13 +511,30 @@ def unpack_frameset(
         save_any_image(img_unquant, output_img_path)
 
 
-def format_template(template: Path, vals: dict, allow_missing: list[str] | None = None):
+def format_template(
+    template: Path,
+    vals: dict,
+    allow_missing: list[str] | None = None,
+    return_updated_subset: bool = False,
+):
+    """
+    Args:
+        template: Path or str, must contain {field} or {field:...d} style template strings
+        vals: dict, keys must match the {field} strings
+        allow_missing: list[str] | None - if provided, keys in the template but not in this list will raise an error
+        return_updated_subset: bool - if True, return the subset of `vals` that was not used
+    """
+
+    matched = []
+
     def replace_func(match):
         full_spec = match.group(1)
         key = full_spec.split(":")[0]
         if key in vals:
             try:
-                return ("{" + full_spec + "}").format(**{key: vals[key]})
+                res = ("{" + full_spec + "}").format(**{key: vals[key]})
+                matched.append(key)
+                return res
             except ValueError as e:
                 raise ValueError(
                     f"Invalid {full_spec=} for {key=} {vals[key]=} in {template=}, {e=}"
@@ -527,6 +553,8 @@ def format_template(template: Path, vals: dict, allow_missing: list[str] | None 
 
     logger.debug(f"{format_template.__name__} {template=} -> {res=}")
 
+    if return_updated_subset:
+        return res, {k: vals[k] for k in vals if k not in matched}
     return res
 
 
@@ -542,7 +570,9 @@ def find_jobs(
     if subset is None:
         subset = {}
     subset["gt_type"] = gt_type
-    input_template = format_template(input_template, subset)
+    input_template, subset = format_template(
+        input_template, subset, return_updated_subset=True
+    )
 
     if match_video_folder and "{frame" in input_template.parts[-1]:
         search_template = input_template.parent
@@ -551,17 +581,12 @@ def find_jobs(
         search_template = input_template
         input_template_extra = None
 
-    print(f"{search_template=} {input_template_extra=}")
-
     paths = list(match_template_paths(search_template))
 
-    skipped_for_subset = 0
     skipped_for_lazy = 0
     jobs = []
     for vid_info, vid_input_path in paths:
-        vid_info["gt_type"] = gt_type
-        if not included_in_filter(vid_info, subset):
-            skipped_for_subset += 1
+        if subset and not included_in_filter(vid_info, subset):
             continue
 
         output_path = format_template(output_template, vid_info, allow_missing=[])
@@ -581,13 +606,11 @@ def find_jobs(
             }
         )
 
-    if len(jobs) == 0 and skipped_for_lazy == 0 and skipped_for_subset == 0:
+    if len(jobs) == 0 and skipped_for_lazy == 0:
         raise ValueError(f"No jobs found for {input_template}")
     msg = f"Found {len(jobs)} jobs for {input_template} -> {output_template}"
     if skipped_for_lazy > 0:
         msg += f", skipped {skipped_for_lazy} due to --lazy flag"
-    if skipped_for_subset > 0:
-        msg += f", skipped {skipped_for_subset} due to --subset flag"
     logger.info(msg)
 
     return jobs
