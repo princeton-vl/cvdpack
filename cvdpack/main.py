@@ -593,18 +593,20 @@ def find_jobs(
     match_video_folder: bool = False,
     lazy: bool = False,
 ) -> list[Job]:
-    
     if subset is None:
         subset = {}
     elif "gt_type" in subset and subset["gt_type"] != gt_type:
         return []
 
-    logger.debug(f"{find_jobs.__name__} {input_template=} {output_template=} {gt_type=} {subset=} {job_defaults=}")
+    logger.debug(
+        f"{find_jobs.__name__} {input_template=} {output_template=} {gt_type=} {subset=} {job_defaults=}"
+    )
 
     subset["gt_type"] = gt_type
     input_template, matched_keys = format_template(
         input_template, subset, return_matched=True
     )
+    matched_keys.add("gt_type")
 
     if match_video_folder and "{frame" in input_template.parts[-1]:
         search_template = input_template.parent
@@ -618,8 +620,6 @@ def find_jobs(
     skipped_for_lazy = 0
     jobs = []
     for vid_info, vid_input_path in paths:
-    
-
         if subset and not included_in_filter(
             vid_info, subset, allow_extra=matched_keys
         ):
