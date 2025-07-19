@@ -224,6 +224,7 @@ def _oob_to_nan_or_error(
     min_orig_val: float,
     max_orig_val: float,
     oob_method: Literal["nan", "nan_warn", "error"],
+    desc: str,
 ):
     oob_mask = np.logical_or(img < min_orig_val, img > max_orig_val)
     if not oob_mask.any():
@@ -231,7 +232,7 @@ def _oob_to_nan_or_error(
 
     oob_pct = 100 * oob_mask.astype(np.float32).mean()
     msg = (
-        f"image had {img.min()=:.2f}, {img.max()=:.2f} "
+        f"file {desc} had {img.min()=:.2f}, {img.max()=:.2f} "
         f"which exceeds quantize range [{min_orig_val:.2f}, {max_orig_val:.2f}]. {oob_pct:.2f}% were out of bounds."
     )
 
@@ -267,7 +268,13 @@ def img_orig_to_pack(
     min_orig_val: float,
     max_orig_val: float,
     out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
+    desc: str = "",
 ):
+    """
+    Args:
+        desc: added to log warnings / errors to make them more descriptive, e.g. list the path
+    """
+
     from_dtype = img.dtype
 
     assert np.issubdtype(to_dtype, np.integer)
@@ -275,16 +282,20 @@ def img_orig_to_pack(
         f"Cannot quantize to signed integer: {to_dtype=}"
     )
 
-    _oob_to_nan_or_error(img, min_orig_val, max_orig_val, out_of_bounds_method)
-
     match pack_method:
         case PackMethod.CHECKBOUNDS:
             assert np.issubdtype(from_dtype, np.integer)
             img_quant = img.astype(to_dtype)
         case PackMethod.LINEAR:
             img_norm = (img - min_orig_val) / (max_orig_val - min_orig_val)
+            _oob_to_nan_or_error(
+                img, min_orig_val, max_orig_val, out_of_bounds_method, desc
+            )
             img_quant = _pack_nan_as_imax(img_norm, to_dtype)
         case PackMethod.INV:
+            _oob_to_nan_or_error(
+                img, min_orig_val, max_orig_val, out_of_bounds_method, desc
+            )
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
             img_norm = (1 / img - min_norm) / (max_norm - min_norm)
@@ -292,13 +303,10 @@ def img_orig_to_pack(
         case PackMethod.ONECHANNEL_F32_AS_2INT16:
             assert img.ndim == 2
             assert img.dtype == np.float32
-            img_quant = img.view(dtype=np.uint16, shape=(*img.shape, 2))
+            img_quant = img.view((*img.shape, 2), dtype=np.uint16)
         case PackMethod.MULTICHANNEL_TO_F16_AS_INT16:
-            assert img.ndim == 2
-            assert img.dtype == np.float32
-            img_quant = img.astype(np.float16).view(
-                dtype=np.uint16, shape=(*img.shape, 2)
-            )
+            assert img.dtype == np.float32, img.dtype
+            img_quant = img.astype(np.float16).view(dtype=np.uint16)
         case _:
             raise ValueError(f"Invalid {pack_method=}")
 
@@ -565,10 +573,17 @@ def pack_frameset(
                 min_orig_val=min_orig_val,
                 max_orig_val=max_orig_val,
                 out_of_bounds_method=out_of_bounds_method,
+                desc=str(frame_input_path),
             )
         except Exception as e:
-            logger.error(f"Error packing {frame_input_path=} to {output_path=}: {e}")
-            continue
+            raise ValueError(
+                f"Error packing {frame_input_path=} to {output_path=}: {e}"
+            ) from e
+
+        if img.ndim == 3 and img.shape[2] == 2:
+            # last dim 1 or 3 is fine, but 2 needs padding to 3 because 2-channel pngs are not a thing (?)
+            img_quant = np.pad(img_quant, ((0, 0), (0, 0), (0, 1)), mode="constant")
+            assert img_quant.shape[2] == 3, f"{img_quant.shape=}"
 
         save_any_image(img_quant, output_path)
 
@@ -792,9 +807,9 @@ def _process_video(
                 tmp_template,
                 to_dtype=DTYPE_MAP[job.config["pack_dtype"]],
                 pack_method=PackMethod.from_str(job.config["pack_method"]),
-                min_orig_val=float(job.config["min_orig_val"]),
-                max_orig_val=float(job.config["max_orig_val"]),
-                out_of_bounds_method=job.config["out_of_bounds_method"],
+                min_orig_val=float(job.config.get("min_orig_val", 0)),
+                max_orig_val=float(job.config.get("max_orig_val", 1)),
+                out_of_bounds_method=job.config.get("out_of_bounds_method", "nan_warn"),
             )
             command = pack_video(
                 tmp_template,
@@ -899,8 +914,6 @@ def process_video_job(job: Job):
         tmp_path.mkdir(parents=True, exist_ok=False)
         return tmp_path
 
-    logger.info(f"Processing {input_path} -> {output_path}")
-
     try:
         metadata_commands = _process_video(
             input_path,
@@ -908,6 +921,7 @@ def process_video_job(job: Job):
             job,
             make_tmp_folder,
         )
+        print(input_path, output_path)
     finally:
         if tmp_path is not None:
             shutil.rmtree(tmp_path)
@@ -1527,8 +1541,8 @@ def main():
         with (args.output / "cvdpack.json").open("w") as f:
             json.dump(config, f, indent=2, default=format_for_json)
 
-    print(
-        f"Completed {args.action} for result {args.output} in {time.time() - start_time:.2f}s"
+    logger.info(
+        f"Completed {args.action} for {args.subset=} {args.output} in {time.time() - start_time:.2f}s"
     )
 
 

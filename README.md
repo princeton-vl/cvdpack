@@ -37,11 +37,9 @@ pip install -e .
 
 ## Example Commands:
 
-Please see `cvdpack --help` for all options!
+Please see `cvdpack --help` for all options! Commands will print very little output (~silence is golden), unless they fail or have -v or -d (--verbose or --debug).
 
 Note: we use TartanAir as an example dataset, but cvdpack is not specific to TartanAir.
-
-Commands will print very little output, unless they fail or you add -v or --debug
 
 #### Pack/unpack tartanair scene locally. 
 Commands shown are for a single scene and video, remove --subset to do the full thing

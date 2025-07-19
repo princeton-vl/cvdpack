@@ -26,10 +26,8 @@
             "packed_path_template": "{scene}/{split}/{vid}/{gt_type}.mkv",
             "unpack_dtype": "float32",
             "unpack_channels_last": 2,
-            "min_orig_val": -200,
-            "max_orig_val": 200,
             "pack_dtype": "uint16",
-            "pack_method": "LINEAR",
+            "pack_method": "MULTICHANNEL_TO_F16_AS_INT16",
             "out_of_bounds_method": "nan_warn"
         },
         "flow_mask": {
