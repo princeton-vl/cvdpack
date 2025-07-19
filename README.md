@@ -67,8 +67,8 @@ e.g just npys -> pngs, or just pngs -> mkvs, or mkvs -> pngs, or pngs -> npys. T
 
 ```bash
 cvdpack pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/  --steps quantize --n_workers 10 --cpus_per_worker 4 --config presets/tartanair.json
-cvdpack pack_dataset --input data/TartanAir_partialpack/ --output data/TartanAir_pack/ --steps pack_video --n_workers 10 --cpus_per_worker 4
-cvdpack unpack_dataset --input data/TartanAir_pack/ --output data/TartanAir_partialunpack/ --steps unpack_video --n_workers 10 --cpus_per_worker 4
+cvdpack pack_dataset --input data/TartanAir_partialpack/ --output data/TartanAir_packed/ --steps pack_video --n_workers 10 --cpus_per_worker 4
+cvdpack unpack_dataset --input data/TartanAir_packed/ --output data/TartanAir_partialunpack/ --steps unpack_video --n_workers 10 --cpus_per_worker 4 
 cvdpack unpack_dataset --input data/TartanAir_partialunpack/ --output data/TartanAir_unpacked/ --steps unquantize --n_workers 10 --cpus_per_worker 4
 ```
 For a single scene (abandonedfactory/Hard/P000):
@@ -89,8 +89,8 @@ Note: currently struggles to do the whole dataset for some dataset layouts e.g. 
 #### Pack individual videos in TartanAir, step by step
 ```bash
 # pack depth/flow into pngs (quantization)
-cvdpack pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/flow/{frame:06d}_{framenext:06d}_flow.npy --output pngs/flow/{frame:06d}.png --to_dtype uint16 --quantize_method LINEAR --min_orig_val -150 --max_orig_val 150
-cvdpack pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/depth/{frame:06d}_left_depth.png --output pngs/depth/{frame:06d}_left_depth.png --to_dtype float32 --quantize_method INV --min_orig_val 0.5 --max_orig_val 1000 --out_of_bounds_method nan
+cvdpack pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/flow/{frame:06d}_{framenext:06d}_flow.npy --output pngs/flow/{frame:06d}.png --to_dtype uint16 --pack_method LINEAR --min_orig_val -150 --max_orig_val 150
+cvdpack pack_frames --input data/TartanAir/abandonedfactory/Hard/P000/depth/{frame:06d}_left_depth.png --output pngs/depth/{frame:06d}_left_depth.png --to_dtype float32 --pack_method INV --min_orig_val 0.5 --max_orig_val 1000 --out_of_bounds_method nan
 
 # pack pngs into mkv (video compression)
 cvdpack pack_frames --input pngs/flow/{frame:06d}.png --output vids/flow.mkv
@@ -101,8 +101,8 @@ cvdpack unpack_frames --input vids/flow.mkv --output pngs_unpacked/flow/{frame:0
 cvdpack unpack_frames --input vids/depth.mkv --output pngs_unpacked/depth/{frame:06d}_left_depth.png
 
 # unpack png into depth/flow npys (unquantization)
-cvdpack unpack_frames --input pngs_unpacked/depth/{frame:06d}_left_depth.png --output unpack/depth/{frame:06d}_left_depth.npy --to_dtype float32 --quantize_method inv --min_orig_val 0.5 --max_orig_val 1000
-cvdpack unpack_frames --input pngs_unpacked/flow/{frame:06d}.png --output unpack/flow/{frame:06d}_{framenext:06d}_flow.npy --to_dtype uint16 --quantize_method linear --min_orig_val -150 --max_orig_val 150
+cvdpack unpack_frames --input pngs_unpacked/depth/{frame:06d}_left_depth.png --output unpack/depth/{frame:06d}_left_depth.npy --to_dtype float32 --pack_method inv --min_orig_val 0.5 --max_orig_val 1000
+cvdpack unpack_frames --input pngs_unpacked/flow/{frame:06d}.png --output unpack/flow/{frame:06d}_{framenext:06d}_flow.npy --to_dtype uint16 --pack_method linear --min_orig_val -150 --max_orig_val 150
 ```
 
 ### Acknowledgement

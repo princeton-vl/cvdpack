@@ -87,7 +87,7 @@ class GtType(Enum):
         return cls(s.lower())
 
 
-class QuantizeMethod(Enum):
+class PackMethod(Enum):
     LINEAR = "linear"
     INV = "inv"
     CHECKBOUNDS = "checkbounds"
@@ -146,10 +146,10 @@ def normalize_vals(
     img: np.ndarray,
     min_orig_val: float,
     max_orig_val: float,
-    quantize_method: QuantizeMethod,
+    pack_method: PackMethod,
 ) -> np.ndarray:
-    match quantize_method:
-        case QuantizeMethod.LINEAR:
+    match pack_method:
+        case PackMethod.LINEAR:
             img_norm = (img - min_orig_val) / (max_orig_val - min_orig_val)
             return img_norm
         # case QuantizeMethod.SYM_SQRT:
@@ -158,13 +158,13 @@ def normalize_vals(
         #    sqrt_max = sym_sqrt(max_orig_val)
         #    img_norm = (img_norm - sqrt_min) / (sqrt_max - sqrt_min)
         #    return img_norm
-        case QuantizeMethod.INV:
+        case PackMethod.INV:
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
             img_norm = (1 / img - min_norm) / (max_norm - min_norm)
             return img_norm
         case _:
-            raise ValueError(f"Invalid {quantize_method=} {type(quantize_method)=}")
+            raise ValueError(f"Invalid {pack_method=} {type(pack_method)=}")
 
 
 def img_quant_to_orig(
@@ -172,21 +172,21 @@ def img_quant_to_orig(
     min_orig_val: float,
     max_orig_val: float,
     to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
+    pack_method: PackMethod,
     unpack_channels_last: int | None = None,
 ) -> np.ndarray:
     assert np.issubdtype(img_quant.dtype, np.unsignedinteger), f"{img_quant.dtype=}"
     imax = np.iinfo(img_quant.dtype).max
     quant_max = imax - 1  # exact maxint val is used for nan
 
-    match quantize_method:
-        case QuantizeMethod.CHECKBOUNDS:
+    match pack_method:
+        case PackMethod.CHECKBOUNDS:
             img = img_quant.astype(to_dtype)
-        case QuantizeMethod.LINEAR:
+        case PackMethod.LINEAR:
             img_norm = img_quant.astype(np.float64) / quant_max
             img_orig = img_norm * (max_orig_val - min_orig_val) + min_orig_val
             img = img_orig.astype(to_dtype)
-        case QuantizeMethod.INV:
+        case PackMethod.INV:
             img_norm = img_quant.astype(np.float64) / quant_max
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
@@ -194,9 +194,9 @@ def img_quant_to_orig(
             img_orig = 1 / img_unmap
             img = img_orig.astype(to_dtype)
         case _:
-            raise ValueError(f"Invalid {quantize_method=}")
+            raise ValueError(f"Invalid {pack_method=}")
 
-    if quantize_method != QuantizeMethod.CHECKBOUNDS:
+    if pack_method != PackMethod.CHECKBOUNDS:
         img[img_quant == imax] = np.nan
 
     if unpack_channels_last is not None:
@@ -212,7 +212,7 @@ def img_orig_to_quant(
     input_img_path: Path,
     output_img_path: Path,
     to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
+    pack_method: PackMethod,
     min_orig_val: float,
     max_orig_val: float,
     out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
@@ -242,7 +242,7 @@ def img_orig_to_quant(
             case "error":
                 raise ValueError(msg)
 
-    if quantize_method == QuantizeMethod.CHECKBOUNDS:
+    if pack_method == PackMethod.CHECKBOUNDS:
         assert np.issubdtype(from_dtype, np.integer), (
             f"{input_img_path=} had {from_dtype=}"
         )
@@ -252,13 +252,13 @@ def img_orig_to_quant(
             f"{input_img_path=} had {from_dtype=}"
         )
         assert np.issubdtype(to_dtype, np.integer), f"{input_img_path=} had {to_dtype=}"
-        img_norm = normalize_vals(img, min_orig_val, max_orig_val, quantize_method)
+        img_norm = normalize_vals(img, min_orig_val, max_orig_val, pack_method)
         intmax = np.iinfo(
             to_dtype
         ).max  # the exact maxval of integer will always be used to represent "nan" or "outofbounds"
         img_quant = np.zeros_like(img, dtype=to_dtype)
         img_quant[oob_mask] = intmax
-        img_quant[~oob_mask] = (img_norm[~oob_mask] * (intmax - 1)).astype(to_dtype) + 1
+        img_quant[~oob_mask] = (img_norm[~oob_mask] * (intmax - 1)).astype(to_dtype)
 
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
@@ -289,10 +289,15 @@ def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False)
         )
 
     newname = re.sub(
-        r"\{frame.*:(0\d+)d\}",  # e.g. {frame:06d} or {framenext:06d}
+        r"\{frame:(0\d+)d\}",  # DONT match {framenext:06d} here because we will explictly fix this later
         lambda m: "*" if as_glob else f"%{m.group(1)}d",
         input_path.name,
     )
+
+    logger.debug(
+        f"{_curlyframe_to_ffmpeg_frametemplate.__name__} {input_path.name=} -> {newname=}"
+    )
+
     return str(input_path.parent / newname)
 
 
@@ -328,11 +333,15 @@ def unpack_video(
     )
     subprocess.check_output(ffmpeg_args)
 
+    # to my knowledge, ffmpeg cannot output framenum AND framenum+1 in the output path template,
+    # so, we have to go back through and rename all the files to resolve {framenext:...} to frame+1
     if "{framenext" in output_path_ffmpeg:
-        for info, path in match_template_paths(output_frames_path_template):
+        targets = list(
+            match_template_paths(output_frames_path_template, allow_any=["framenext"])
+        )
+        for info, file in targets:
             info["framenext"] = info["frame"] + 1
-            next_path = format_template(output_frames_path_template, info)
-            shutil.move(path, next_path)
+            shutil.move(file, format_template(output_frames_path_template, info))
 
     return command
 
@@ -351,6 +360,7 @@ def pack_video(
     if matched is None:
         raise ValueError(f"No frames found in {input_frames_path=}")
     first = load_any_image(matched[1])
+    start_number = matched[0]["frame"]
     assert first is not None, f"Failed to load {matched[1]=}"
 
     dim = first.shape[-1] if first.ndim == 3 else 1
@@ -361,6 +371,12 @@ def pack_video(
         input_frames_path, as_glob=True
     )
 
+    if start_number != 0:
+        raise ValueError(
+            f"Expected start_number to be 0, got {start_number=} due to first matched frame {matched[1]=} "
+            "Videos which start at non-zero frame numbers are not yet supported, but possibly could be. "
+            "If your video _should_ be starting at zero but you see this error, contact the developers."
+        )
     ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
 
     if loglevel != logging.DEBUG:
@@ -371,7 +387,16 @@ def pack_video(
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
 
-    ffmpeg_args.extend(["-pattern_type", "glob", "-i", input_frames_ffmpeg])
+    ffmpeg_args.extend(
+        [
+            "-start_number",
+            str(start_number),
+            "-pattern_type",
+            "glob",
+            "-i",
+            input_frames_ffmpeg,
+        ]
+    )
     ffmpeg_args.extend(encoder_args.split())
     ffmpeg_args.extend(["-pix_fmt", pix_fmt, "-an", str(output_video_path)])
 
@@ -408,7 +433,11 @@ def unpack_tarball(
 def match_template_paths(
     template: Path,
     match_video_folder: bool = False,
+    allow_any: list[str] | None = None,
 ) -> Generator[tuple[dict, Path], None, None]:
+    if allow_any is None:
+        allow_any = []
+
     first_curlypart = next((i for i, p in enumerate(template.parts) if "{" in p), None)
     if first_curlypart is None:
         if template.exists():
@@ -439,7 +468,7 @@ def match_template_paths(
         if not field:
             continue
 
-        if isinstance(conv, str) and conv.endswith("d"):
+        if isinstance(conv, str) and conv.endswith("d") and field not in allow_any:
             parts.append(rf"(?P<{field}>\d+)")
         else:
             parts.append(rf"(?P<{field}>[^/\\]+)")
@@ -473,7 +502,7 @@ def pack_frameset(
     input_path_template: Path,
     output_path_template: Path,
     to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
+    pack_method: PackMethod,
     min_orig_val: float,
     max_orig_val: float,
     out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
@@ -495,7 +524,7 @@ def pack_frameset(
             frame_input_path,
             output_path,
             to_dtype,
-            quantize_method=quantize_method,
+            pack_method=pack_method,
             min_orig_val=min_orig_val,
             max_orig_val=max_orig_val,
             out_of_bounds_method=out_of_bounds_method,
@@ -507,7 +536,7 @@ def unpack_frameset(
     input_path_template: Path,
     output_path_template: Path,
     to_dtype: np.dtype,
-    quantize_method: QuantizeMethod,
+    pack_method: PackMethod,
     min_orig_val: float,
     max_orig_val: float,
     unpack_channels_last: int | None = None,
@@ -534,11 +563,15 @@ def unpack_frameset(
             min_orig_val,
             max_orig_val,
             to_dtype=to_dtype,
-            quantize_method=quantize_method,
+            pack_method=pack_method,
             unpack_channels_last=unpack_channels_last,
         )
 
-        output_img_path = format_template(output_path_template, frame_info)
+        if "frame" in frame_info:
+            frame_info["framenext"] = frame_info["frame"] + 1
+        output_img_path = format_template(
+            output_path_template, frame_info, allow_missing=["framenext"]
+        )
         logger.debug(
             f"Unquantizing {input_img_path=} to {output_img_path=}, {img_unquant.min()=}, {img_unquant.max()=}"
         )
@@ -626,7 +659,7 @@ def find_jobs(
         f"{find_jobs.__name__} {input_template=} {output_template=} {gt_type=} {subset=} {job_defaults=}"
     )
 
-    subset["gt_type"] = gt_type
+    subset = {**subset, "gt_type": gt_type}
     input_template, matched_keys = format_template(
         input_template, subset, return_matched=True
     )
@@ -717,7 +750,7 @@ def _process_video(
                 input_path,
                 tmp_template,
                 to_dtype=DTYPE_MAP[job.config["pack_dtype"]],
-                quantize_method=QuantizeMethod.from_str(job.config["quantize_method"]),
+                pack_method=PackMethod.from_str(job.config["pack_method"]),
                 min_orig_val=float(job.config["min_orig_val"]),
                 max_orig_val=float(job.config["max_orig_val"]),
                 out_of_bounds_method=job.config["out_of_bounds_method"],
@@ -744,7 +777,7 @@ def _process_video(
                 input_path,
                 output_path,
                 to_dtype=DTYPE_MAP[job.config["pack_dtype"]],
-                quantize_method=QuantizeMethod.from_str(job.config["quantize_method"]),
+                pack_method=PackMethod.from_str(job.config["pack_method"]),
                 min_orig_val=float(job.config["min_orig_val"]),
                 max_orig_val=float(job.config["max_orig_val"]),
                 out_of_bounds_method=job.config["out_of_bounds_method"],
@@ -754,7 +787,7 @@ def _process_video(
                 input_path,
                 output_path,
                 to_dtype=DTYPE_MAP[job.config["unpack_dtype"]],
-                quantize_method=QuantizeMethod.from_str(job.config["quantize_method"]),
+                pack_method=PackMethod.from_str(job.config["pack_method"]),
                 min_orig_val=float(job.config["min_orig_val"]),
                 max_orig_val=float(job.config["max_orig_val"]),
                 unpack_channels_last=job.config.get("unpack_channels_last", None),
@@ -771,7 +804,7 @@ def _process_video(
                 tmp_frames,
                 output_path,
                 to_dtype=DTYPE_MAP[job.config["unpack_dtype"]],
-                quantize_method=QuantizeMethod.from_str(job.config["quantize_method"]),
+                pack_method=PackMethod.from_str(job.config["pack_method"]),
                 min_orig_val=float(job.config["min_orig_val"]),
                 max_orig_val=float(job.config["max_orig_val"]),
                 unpack_channels_last=job.config.get("unpack_channels_last", None),
@@ -1201,10 +1234,10 @@ def parse_args():
     # frames level configs - valid only for level=frameset
     parser.add_argument("--to_dtype", type=str, choices=DTYPE_MAP.keys(), default=None)
     parser.add_argument(
-        "--quantize_method",
-        type=QuantizeMethod.from_str,
+        "--pack_method",
+        type=PackMethod.from_str,
         default=None,
-        choices=list(QuantizeMethod),
+        choices=list(PackMethod),
     )
     parser.add_argument("--min_orig_val", type=float, default=None)
     parser.add_argument("--max_orig_val", type=float, default=None)
@@ -1416,7 +1449,7 @@ def main():
                 args.input,
                 args.output,
                 args.to_dtype,
-                args.quantize_method,
+                args.pack_method,
                 args.min_orig_val,
                 args.max_orig_val,
                 args.out_of_bounds_method,
@@ -1433,7 +1466,7 @@ def main():
                 args.input,
                 args.output,
                 args.to_dtype,
-                args.quantize_method,
+                args.pack_method,
                 args.min_orig_val,
                 args.max_orig_val,
             )
@@ -1502,7 +1535,7 @@ def main():
                 "packed": args.output,
                 "min_orig_val": args.min_orig_val,
                 "max_orig_val": args.max_orig_val,
-                "quantize_method": args.quantize_method,
+                "pack_method": args.pack_method,
                 "out_of_bounds_method": args.out_of_bounds_method,
                 "pack_dtype": args.to_dtype,
             }

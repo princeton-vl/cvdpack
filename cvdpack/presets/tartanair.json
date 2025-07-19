@@ -8,7 +8,7 @@
             "unpack_dtype": "uint8",
             "min_orig_val": 0,
             "max_orig_val": 255,
-            "quantize_method": "CHECKBOUNDS",
+            "pack_method": "CHECKBOUNDS",
             "out_of_bounds_method": "error"
         },
         "depth": {
@@ -18,7 +18,7 @@
             "min_orig_val": 0.5,
             "max_orig_val": 1000,
             "pack_dtype": "uint16",
-            "quantize_method": "INV",
+            "pack_method": "INV",
             "out_of_bounds_method": "nan"
         },
         "flow": {
@@ -29,7 +29,7 @@
             "min_orig_val": -200,
             "max_orig_val": 200,
             "pack_dtype": "uint16",
-            "quantize_method": "LINEAR",
+            "pack_method": "LINEAR",
             "out_of_bounds_method": "nan_warn"
         },
         "flow_mask": {
@@ -39,7 +39,7 @@
             "min_orig_val": 0,
             "max_orig_val": 255,
             "pack_dtype": "uint8",
-            "quantize_method": "CHECKBOUNDS",
+            "pack_method": "CHECKBOUNDS",
             "out_of_bounds_method": "error"
         },
         "seg": {
@@ -49,7 +49,7 @@
             "min_orig_val": 0,
             "max_orig_val": 255,
             "pack_dtype": "uint8",
-            "quantize_method": "CHECKBOUNDS",
+            "pack_method": "CHECKBOUNDS",
             "out_of_bounds_method": "error"
         },
         "pose": {
