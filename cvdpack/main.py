@@ -197,16 +197,16 @@ def img_pack_to_orig(
             img = img_orig.astype(to_dtype)
             img[img_quant == imax] = np.nan
         case PackMethod.ONECHANNEL_F32_AS_2INT16:
-            assert img_quant.shape[2] == 3
+            # shape should be HxWx2 where 2 unpacks to first16bits, second16bits
+            assert img_quant.shape[2] == 2, img_quant.shape
             assert img_quant.dtype == np.uint16
-            img = img_quant[:, :, :2]
-            img = img.view(dtype=np.float32, shape=img_quant.shape[:2])
+            img = img_quant.view(dtype=np.float32)
         case PackMethod.MULTICHANNEL_TO_F16_AS_INT16:
-            # TODO could easilly also allow one or two channel input
-            if img.ndim == 2:
-                img = img_quant[..., np.newaxis]
-            assert img.shape[2] <= 3
-            img = img.astype(np.float16).view(dtype=np.uint16, shape=img.shape[:2])
+            if img_quant.ndim == 2:
+                img_quant = img_quant[..., np.newaxis]
+            assert img_quant.shape[2] <= 3
+            assert img_quant.dtype == np.uint16
+            img = img_quant.view(dtype=np.float16)  # reinterpret cast
         case _:
             raise ValueError(f"Invalid {pack_method=}")
 
@@ -301,12 +301,19 @@ def img_orig_to_pack(
             img_norm = (1 / img - min_norm) / (max_norm - min_norm)
             img_quant = _pack_nan_as_imax(img_norm, to_dtype)
         case PackMethod.ONECHANNEL_F32_AS_2INT16:
-            assert img.ndim == 2
-            assert img.dtype == np.float32
-            img_quant = img.view((*img.shape, 2), dtype=np.uint16)
+            if img.ndim == 2:
+                img = img[..., np.newaxis]
+            W, H, D = img.shape
+            if img.dtype != np.float32 or D != 1:
+                raise ValueError(
+                    f"Expected float32 1 channel for {PackMethod.ONECHANNEL_F32_AS_2INT16=}, got {img.dtype=}, {img.shape=}"
+                )
+            # view to reinterpret float bytes as uint16.
+            # this puts an extra channel of dim 2 at the end, which is what we want.
+            img_quant = img.view(np.float16).astype(np.uint16)  #
         case PackMethod.MULTICHANNEL_TO_F16_AS_INT16:
             assert img.dtype == np.float32, img.dtype
-            img_quant = img.astype(np.float16).view(dtype=np.uint16)
+            img_quant = img.astype(np.float16).view(dtype=np.uint16)  # reinterpret cast
         case _:
             raise ValueError(f"Invalid {pack_method=}")
 
@@ -613,6 +620,10 @@ def unpack_frameset(
         assert np.issubdtype(img.dtype, np.integer), (
             f"{input_img_path=} had {img.dtype=}"
         )
+
+        if unpack_channels_last is not None:
+            assert img.ndim == 3, img.shape
+            img = img[:, :, :unpack_channels_last]
 
         img_unquant = img_pack_to_orig(
             img,
