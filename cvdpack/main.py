@@ -159,15 +159,12 @@ def normalize_vals(
         #    img_norm = (img_norm - sqrt_min) / (sqrt_max - sqrt_min)
         #    return img_norm
         case PackMethod.INV:
-            min_norm = 1 / max_orig_val
-            max_norm = 1 / min_orig_val
-            img_norm = (1 / img - min_norm) / (max_norm - min_norm)
             return img_norm
         case _:
             raise ValueError(f"Invalid {pack_method=} {type(pack_method)=}")
 
 
-def img_quant_to_orig(
+def img_pack_to_orig(
     img_quant: np.ndarray,
     min_orig_val: float,
     max_orig_val: float,
@@ -186,6 +183,7 @@ def img_quant_to_orig(
             img_norm = img_quant.astype(np.float64) / quant_max
             img_orig = img_norm * (max_orig_val - min_orig_val) + min_orig_val
             img = img_orig.astype(to_dtype)
+            img[img_quant == imax] = np.nan
         case PackMethod.INV:
             img_norm = img_quant.astype(np.float64) / quant_max
             min_norm = 1 / max_orig_val
@@ -193,11 +191,9 @@ def img_quant_to_orig(
             img_unmap = img_norm * (max_norm - min_norm) + min_norm
             img_orig = 1 / img_unmap
             img = img_orig.astype(to_dtype)
+            img[img_quant == imax] = np.nan
         case _:
             raise ValueError(f"Invalid {pack_method=}")
-
-    if pack_method != PackMethod.CHECKBOUNDS:
-        img[img_quant == imax] = np.nan
 
     if unpack_channels_last is not None:
         # needed for cases like flow, which can be 2 channel, but will have been promoted to a 3 channel png/mkv
@@ -208,7 +204,49 @@ def img_quant_to_orig(
     return img
 
 
-def img_orig_to_quant(
+def _oob_to_nan_or_error(
+    img: np.ndarray,
+    min_orig_val: float,
+    max_orig_val: float,
+    oob_method: Literal["nan", "nan_warn", "error"],
+    input_img_path: Path,
+):
+    oob_mask = np.logical_or(img < min_orig_val, img > max_orig_val)
+    if not oob_mask.any():
+        return
+
+    oob_pct = 100 * oob_mask.astype(np.float32).mean()
+    msg = (
+        f"{input_img_path=} had {img.min()=:.2f}, {img.max()=:.2f} "
+        f"which exceeds quantize range [{min_orig_val:.2f}, {max_orig_val:.2f}]. {oob_pct:.2f}% were out of bounds."
+    )
+
+    match oob_method:
+        case "nan":
+            img[oob_mask] = np.nan
+        case "nan_warn":
+            img[oob_mask] = np.nan
+            logger.warning(msg + ", will be interpreted as nan")
+        case "error":
+            raise ValueError(msg)
+
+
+def _pack_nan_as_imax(
+    img_norm: np.ndarray,
+    to_dtype: np.dtype,
+):
+    assert np.issubdtype(to_dtype, np.integer)
+
+    intmax = np.iinfo(to_dtype).max
+    img_quant = np.zeros_like(img_norm, dtype=to_dtype)
+
+    isnan = np.isnan(img_norm)
+    img_quant[isnan] = intmax
+    img_quant[~isnan] = (img_norm[~isnan] * (intmax - 1)).astype(to_dtype)
+    return img_quant
+
+
+def img_orig_to_pack(
     input_img_path: Path,
     output_img_path: Path,
     to_dtype: np.dtype,
@@ -226,43 +264,32 @@ def img_orig_to_quant(
         f"Cannot quantize to signed integer: {to_dtype=}"
     )
 
-    oob_mask = np.logical_or(img < min_orig_val, img > max_orig_val)
-    if oob_mask.any():
-        oob_pct = 100 * oob_mask.astype(np.float32).mean()
-        msg = (
-            f"{input_img_path=} had {img.min()=:.2f}, {img.max()=:.2f} "
-            f"which exceeds quantize range [{min_orig_val:.2f}, {max_orig_val:.2f}]. {oob_pct:.2f}% were out of bounds."
-        )
-        match out_of_bounds_method:
-            case "nan":
-                img[oob_mask] = np.nan
-            case "nan_warn":
-                img[oob_mask] = np.nan
-                logger.warning(msg + ", will be interpreted as nan")
-            case "error":
-                raise ValueError(msg)
+    _oob_to_nan_or_error(
+        img, min_orig_val, max_orig_val, out_of_bounds_method, input_img_path
+    )
 
-    if pack_method == PackMethod.CHECKBOUNDS:
-        assert np.issubdtype(from_dtype, np.integer), (
-            f"{input_img_path=} had {from_dtype=}"
-        )
-        img_quant = img.astype(to_dtype)
-    else:
-        assert np.issubdtype(from_dtype, np.floating), (
-            f"{input_img_path=} had {from_dtype=}"
-        )
-        assert np.issubdtype(to_dtype, np.integer), f"{input_img_path=} had {to_dtype=}"
-        img_norm = normalize_vals(img, min_orig_val, max_orig_val, pack_method)
-        intmax = np.iinfo(
-            to_dtype
-        ).max  # the exact maxval of integer will always be used to represent "nan" or "outofbounds"
-        img_quant = np.zeros_like(img, dtype=to_dtype)
-        img_quant[oob_mask] = intmax
-        img_quant[~oob_mask] = (img_norm[~oob_mask] * (intmax - 1)).astype(to_dtype)
+    match pack_method:
+        case PackMethod.CHECKBOUNDS:
+            assert np.issubdtype(from_dtype, np.integer)
+            img_quant = img.astype(to_dtype)
+        case PackMethod.LINEAR:
+            min_norm = 1 / max_orig_val
+            max_norm = 1 / min_orig_val
+            img_norm = (1 / img - min_norm) / (max_norm - min_norm)
+            img_quant = _pack_nan_as_imax(img_norm, to_dtype)
+        case PackMethod.INV:
+            min_norm = 1 / max_orig_val
+            max_norm = 1 / min_orig_val
+            img_norm = (1 / img - min_norm) / (max_norm - min_norm)
+            img_quant = _pack_nan_as_imax(img_norm, to_dtype)
+        case PackMethod.REINTERPRET_F32_2xINT16:
+        case _:
+            raise ValueError(f"Invalid {pack_method=}")
 
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
-            f"Quantizing {input_img_path=} to {output_img_path=}, {img.min()=:.2f}, {img.max()=:.2f}, {img_quant.min()=:.2f}, {img_quant.max()=:.2f}"
+            f"Packing {input_img_path=} to {output_img_path=}, "
+            f"{img.min()=:.2f}, {img.max()=:.2f}, {img_quant.min()=:.2f}, {img_quant.max()=:.2f}"
         )
 
     if (
@@ -271,6 +298,7 @@ def img_orig_to_quant(
         and img_quant.shape[-1] == 2
     ):
         # add an empty third channel for compatibility with png formats
+        # applies to flow and any reinterpret_f32_2xint16
         img_quant = np.concatenate(
             [img_quant, np.zeros_like(img_quant[:, :, :1])], axis=2
         )
@@ -520,7 +548,7 @@ def pack_frameset(
     for frame_info, frame_input_path in all_files:
         output_path = format_template(output_path_template, frame_info)
 
-        img_quant = img_orig_to_quant(
+        img_quant = img_orig_to_pack(
             frame_input_path,
             output_path,
             to_dtype,
@@ -558,7 +586,7 @@ def unpack_frameset(
             f"{input_img_path=} had {img.dtype=}"
         )
 
-        img_unquant = img_quant_to_orig(
+        img_unquant = img_pack_to_orig(
             img,
             min_orig_val,
             max_orig_val,
