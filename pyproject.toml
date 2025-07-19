@@ -36,17 +36,11 @@ slurm = [
 ]
 dev = [
     "ruff",
-    "matplotlib"
+    "matplotlib",
+    "pytest"
 ]
 
 [build-system]
 # based on https://github.com/astral-sh/trusted-publishing-examples/blob/main/pyproject.toml
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.uv]
-dev-dependencies = [
-    "pytest>=8.3.3",
-    "ruff>=0.7.1",
-]
-

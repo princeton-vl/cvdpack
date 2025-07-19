@@ -90,6 +90,8 @@ class GtType(Enum):
 class PackMethod(Enum):
     LINEAR = "linear"
     INV = "inv"
+    ONECHANNEL_F32_AS_2INT16 = "onechannel_f32_as_2int16"
+    MULTICHANNEL_TO_F16_AS_INT16 = "multichannel_to_f16_as_int16"
     CHECKBOUNDS = "checkbounds"
 
     @classmethod
@@ -185,6 +187,8 @@ def img_pack_to_orig(
             img = img_orig.astype(to_dtype)
             img[img_quant == imax] = np.nan
         case PackMethod.INV:
+            assert max_orig_val > 0, max_orig_val
+            assert min_orig_val > 0, min_orig_val
             img_norm = img_quant.astype(np.float64) / quant_max
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
@@ -192,6 +196,17 @@ def img_pack_to_orig(
             img_orig = 1 / img_unmap
             img = img_orig.astype(to_dtype)
             img[img_quant == imax] = np.nan
+        case PackMethod.ONECHANNEL_F32_AS_2INT16:
+            assert img_quant.shape[2] == 3
+            assert img_quant.dtype == np.uint16
+            img = img_quant[:, :, :2]
+            img = img.view(dtype=np.float32, shape=img_quant.shape[:2])
+        case PackMethod.MULTICHANNEL_TO_F16_AS_INT16:
+            # TODO could easilly also allow one or two channel input
+            if img.ndim == 2:
+                img = img_quant[..., np.newaxis]
+            assert img.shape[2] <= 3
+            img = img.astype(np.float16).view(dtype=np.uint16, shape=img.shape[:2])
         case _:
             raise ValueError(f"Invalid {pack_method=}")
 
@@ -209,7 +224,6 @@ def _oob_to_nan_or_error(
     min_orig_val: float,
     max_orig_val: float,
     oob_method: Literal["nan", "nan_warn", "error"],
-    input_img_path: Path,
 ):
     oob_mask = np.logical_or(img < min_orig_val, img > max_orig_val)
     if not oob_mask.any():
@@ -217,7 +231,7 @@ def _oob_to_nan_or_error(
 
     oob_pct = 100 * oob_mask.astype(np.float32).mean()
     msg = (
-        f"{input_img_path=} had {img.min()=:.2f}, {img.max()=:.2f} "
+        f"image had {img.min()=:.2f}, {img.max()=:.2f} "
         f"which exceeds quantize range [{min_orig_val:.2f}, {max_orig_val:.2f}]. {oob_pct:.2f}% were out of bounds."
     )
 
@@ -247,16 +261,13 @@ def _pack_nan_as_imax(
 
 
 def img_orig_to_pack(
-    input_img_path: Path,
-    output_img_path: Path,
+    img: np.ndarray,
     to_dtype: np.dtype,
     pack_method: PackMethod,
     min_orig_val: float,
     max_orig_val: float,
     out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
 ):
-    img = load_any_image(input_img_path)
-
     from_dtype = img.dtype
 
     assert np.issubdtype(to_dtype, np.integer)
@@ -264,43 +275,37 @@ def img_orig_to_pack(
         f"Cannot quantize to signed integer: {to_dtype=}"
     )
 
-    _oob_to_nan_or_error(
-        img, min_orig_val, max_orig_val, out_of_bounds_method, input_img_path
-    )
+    _oob_to_nan_or_error(img, min_orig_val, max_orig_val, out_of_bounds_method)
 
     match pack_method:
         case PackMethod.CHECKBOUNDS:
             assert np.issubdtype(from_dtype, np.integer)
             img_quant = img.astype(to_dtype)
         case PackMethod.LINEAR:
-            min_norm = 1 / max_orig_val
-            max_norm = 1 / min_orig_val
-            img_norm = (1 / img - min_norm) / (max_norm - min_norm)
+            img_norm = (img - min_orig_val) / (max_orig_val - min_orig_val)
             img_quant = _pack_nan_as_imax(img_norm, to_dtype)
         case PackMethod.INV:
             min_norm = 1 / max_orig_val
             max_norm = 1 / min_orig_val
             img_norm = (1 / img - min_norm) / (max_norm - min_norm)
             img_quant = _pack_nan_as_imax(img_norm, to_dtype)
-        case PackMethod.REINTERPRET_F32_2xINT16:
+        case PackMethod.ONECHANNEL_F32_AS_2INT16:
+            assert img.ndim == 2
+            assert img.dtype == np.float32
+            img_quant = img.view(dtype=np.uint16, shape=(*img.shape, 2))
+        case PackMethod.MULTICHANNEL_TO_F16_AS_INT16:
+            assert img.ndim == 2
+            assert img.dtype == np.float32
+            img_quant = img.astype(np.float16).view(
+                dtype=np.uint16, shape=(*img.shape, 2)
+            )
         case _:
             raise ValueError(f"Invalid {pack_method=}")
 
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
-            f"Packing {input_img_path=} to {output_img_path=}, "
+            f"Packing {img.shape=}, {img.dtype=}, "
             f"{img.min()=:.2f}, {img.max()=:.2f}, {img_quant.min()=:.2f}, {img_quant.max()=:.2f}"
-        )
-
-    if (
-        output_img_path.suffix == ".png"
-        and img_quant.ndim == 3
-        and img_quant.shape[-1] == 2
-    ):
-        # add an empty third channel for compatibility with png formats
-        # applies to flow and any reinterpret_f32_2xint16
-        img_quant = np.concatenate(
-            [img_quant, np.zeros_like(img_quant[:, :, :1])], axis=2
         )
 
     return img_quant
@@ -434,11 +439,11 @@ def pack_video(
 
     return command
 
-def pack_tarball(
-    input_frames_template: Path, 
-    output_tarball_path: Path
-):
-    logger.info(f"{pack_tarball.__name__} {input_frames_template=} to {output_tarball_path=}")
+
+def pack_tarball(input_frames_template: Path, output_tarball_path: Path):
+    logger.info(
+        f"{pack_tarball.__name__} {input_frames_template=} to {output_tarball_path=}"
+    )
     output_tarball_path.parent.mkdir(parents=True, exist_ok=True)
 
     with tarfile.open(output_tarball_path, "w:gz") as tar:
@@ -446,11 +451,14 @@ def pack_tarball(
             output_path = format_template(output_tarball_path, frame_info)
             tar.add(frame_input_path, arcname=output_path.name)
 
+
 def unpack_tarball(
-    input_tarball_path: Path, 
+    input_tarball_path: Path,
     output_frames_path_template: Path,
 ):
-    logger.info(f"{unpack_tarball.__name__} {input_tarball_path=} to {output_frames_path_template=}")
+    logger.info(
+        f"{unpack_tarball.__name__} {input_tarball_path=} to {output_frames_path_template=}"
+    )
     output_frames_path_template.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(input_tarball_path, "r:gz") as tar:
         for member in tar.getmembers():
@@ -548,15 +556,20 @@ def pack_frameset(
     for frame_info, frame_input_path in all_files:
         output_path = format_template(output_path_template, frame_info)
 
-        img_quant = img_orig_to_pack(
-            frame_input_path,
-            output_path,
-            to_dtype,
-            pack_method=pack_method,
-            min_orig_val=min_orig_val,
-            max_orig_val=max_orig_val,
-            out_of_bounds_method=out_of_bounds_method,
-        )
+        img = load_any_image(frame_input_path)
+        try:
+            img_quant = img_orig_to_pack(
+                img,
+                to_dtype,
+                pack_method=pack_method,
+                min_orig_val=min_orig_val,
+                max_orig_val=max_orig_val,
+                out_of_bounds_method=out_of_bounds_method,
+            )
+        except Exception as e:
+            logger.error(f"Error packing {frame_input_path=} to {output_path=}: {e}")
+            continue
+
         save_any_image(img_quant, output_path)
 
 

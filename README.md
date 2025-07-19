@@ -46,7 +46,7 @@ Commands will print very little output, unless they fail or you add -v or --debu
 #### Pack/unpack tartanair scene locally. 
 Commands shown are for a single scene and video, remove --subset to do the full thing
 ```bash
-cvdpack pack_dataset --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
+cvdpack pack_dataset --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_quantized.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
 
 cvdpack unpack_dataset --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 10 --tmp_folder data/tmp/ --subset scene=abandonedfactory vid=P000 -v
 ```
@@ -56,7 +56,7 @@ Filesizes are approx 8.6GB for the raw abandonedfactory/Hard/P000 scene, 526M fo
 #### Pack/unpack all of TartanAir on a SLURM cluster 
 Commands shown work for princeton-vl's cluster, you will need to customize the paths and slurm args for own cluster.
 ```bash
-screen cvdpack pack_dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+screen cvdpack pack_dataset --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_quantized.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 
 screen cvdpack unpack_dataset --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
@@ -66,7 +66,7 @@ screen cvdpack unpack_dataset --input /n/fs/scratch/$USER/data/TartanAir_packed 
 e.g just npys -> pngs, or just pngs -> mkvs, or mkvs -> pngs, or pngs -> npys. These can be run in sequence. 
 
 ```bash
-cvdpack pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/  --steps quantize --n_workers 10 --cpus_per_worker 4 --config presets/tartanair.json
+cvdpack pack_dataset --input data/TartanAir/ --output data/TartanAir_partialpack/  --steps quantize --n_workers 10 --cpus_per_worker 4 --config presets/tartanair_quantized.json
 cvdpack pack_dataset --input data/TartanAir_partialpack/ --output data/TartanAir_packed/ --steps pack_video --n_workers 10 --cpus_per_worker 4
 cvdpack unpack_dataset --input data/TartanAir_packed/ --output data/TartanAir_partialunpack/ --steps unpack_video --n_workers 10 --cpus_per_worker 4 
 cvdpack unpack_dataset --input data/TartanAir_partialunpack/ --output data/TartanAir_unpacked/ --steps unquantize --n_workers 10 --cpus_per_worker 4
