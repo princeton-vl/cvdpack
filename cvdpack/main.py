@@ -1218,10 +1218,9 @@ def validate_args(args: argparse.Namespace):
     if args.config is not None and args.config.parts[0] == "presets":
         args.config = Path(__file__).parent / args.config
 
-    if args.n_workers is not None and not args.action.endswith("_dataset"):
+    if args.n_workers is not None and args.action == "copy":
         raise ValueError(
-            f"--parallel_mode {args.parallel_mode=} only applies to paralellism over videos, not {args.action=}."
-            " per-frame paralellism is not currently supported"
+            f"{args.parallel_mode=} {args.n_workers=} doesnt currently work for {args.action=}."
         )
 
     avoids_ffmpeg = (
@@ -1254,10 +1253,8 @@ def parse_args():
         "action",
         type=str,
         choices=[
-            "pack_frames",
-            "unpack_frames",
-            "pack_dataset",
-            "unpack_dataset",
+            "pack",
+            "unpack",
             "copy",
         ],
     )
@@ -1270,23 +1267,6 @@ def parse_args():
         default=None,
         nargs="*",
         choices=["quantize", "pack_video", "unpack_video", "unquantize"],
-    )
-
-    # frames level configs - valid only for level=frameset
-    parser.add_argument("--to_dtype", type=str, choices=DTYPE_MAP.keys(), default=None)
-    parser.add_argument(
-        "--pack_method",
-        type=PackMethod.from_str,
-        default=None,
-        choices=list(PackMethod),
-    )
-    parser.add_argument("--min_orig_val", type=float, default=None)
-    parser.add_argument("--max_orig_val", type=float, default=None)
-    parser.add_argument(
-        "--out_of_bounds_method",
-        type=str,
-        choices=["nan", "nan_warn", "error"],
-        default="nan_warn",
     )
 
     # scene level configs - valid only for level="scene"
@@ -1483,42 +1463,8 @@ def main():
                 "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
             )
 
-    out_suffix = args.output.suffix if not args.output.is_dir() else None
-    match args.action, out_suffix:
-        case "pack_frames", ".png":
-            pack_frameset(
-                args.input,
-                args.output,
-                args.to_dtype,
-                args.pack_method,
-                args.min_orig_val,
-                args.max_orig_val,
-                args.out_of_bounds_method,
-            )
-        case "pack_frames", ".mkv":
-            pack_video(
-                args.input,
-                args.output,
-                n_cpus=args.cpus_per_worker,
-                loglevel=args.loglevel,
-            )
-        case "unpack_frames", ".png":
-            unpack_frameset(
-                args.input,
-                args.output,
-                args.to_dtype,
-                args.pack_method,
-                args.min_orig_val,
-                args.max_orig_val,
-            )
-        case "unpack_frames", ".mkv":
-            unpack_video(
-                args.input,
-                args.output,
-                n_cpus=args.cpus_per_worker,
-                loglevel=args.loglevel,
-            )
-        case "pack_dataset", _:
+    match args.action:
+        case "pack":
             if not args.input.is_dir():
                 raise ValueError(
                     f"pack_dataset requires input to be a directory: {args.input=}"
@@ -1537,7 +1483,7 @@ def main():
                 cpus_per_worker=args.cpus_per_worker,
                 loglevel=args.loglevel,
             )
-        case "unpack_dataset", _:
+        case "unpack":
             if not args.input.is_dir():
                 raise ValueError(
                     f"unpack_dataset requires input to be a directory: {args.input=}"
@@ -1556,7 +1502,7 @@ def main():
                 cpus_per_worker=args.cpus_per_worker,
                 loglevel=args.loglevel,
             )
-        case "copy", _:
+        case "copy":
             copy_files(
                 args.input,
                 args.output,
@@ -1569,32 +1515,16 @@ def main():
     if args.action == "copy" or config is None:
         return
 
-    if args.action == "pack_frames" and args.output.suffix == ".png":
-        config["data_types"].append(
-            {
-                "original": args.input,
-                "packed": args.output,
-                "min_orig_val": args.min_orig_val,
-                "max_orig_val": args.max_orig_val,
-                "pack_method": args.pack_method,
-                "out_of_bounds_method": args.out_of_bounds_method,
-                "pack_dtype": args.to_dtype,
-            }
-        )
-    elif args.action.endswith("_dataset"):
-        config["metadata"]["original_folder"] = str(args.input)
-        config["metadata"]["packed_folder"] = str(args.output)
-
     config["metadata"]["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
     config["metadata"]["cvdpack_version"] = __version__
     config["metadata"]["args"] = vars(args)
     config["metadata"]["pack_runtime"] = time.time() - start_time
 
-    if args.action.endswith("_dataset"):
+    if args.action in {"pack", "unpack"}:
+        config["metadata"]["original_folder"] = str(args.input)
+        config["metadata"]["packed_folder"] = str(args.output)
+        logger.info(f"Adding metadata to {args.output / 'cvdpack.json'}")
         with (args.output / "cvdpack.json").open("w") as f:
-            json.dump(config, f, indent=2, default=format_for_json)
-    elif config_path is not None and not str(config_path).startswith("presets/"):
-        with config_path.open("w") as f:
             json.dump(config, f, indent=2, default=format_for_json)
 
     print(
