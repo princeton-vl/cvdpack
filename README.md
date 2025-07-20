@@ -1,10 +1,12 @@
 # Computer Vision Data Packer (uvx cvdpack)
 
-A tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos.
-
-Reduce your dataset size by up to 90+%, with minimal changes in groundtruth accuracy!
+A tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos. Reduce your dataset size by up to 90+%, with minimal changes in groundtruth accuracy!
 
 :warning: Make a backup of your data, and doublecheck your experimental results are not changed by uvx cvdpack :warning:
+
+Currently, this tool has been minimally tested to work with the following dataset(s)
+- TartanAir
+- TODO: test more. 
 
 ### Installation
 
@@ -18,25 +20,15 @@ brew install ffmpeg
 # windows - TODO?
 ```
 
-Install uv ([detailed instructions](https://docs.astral.sh/uv/getting-started/installation/))
-```bash
-#Mac/Linux:
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+Then, install uv: [instructions](https://docs.astral.sh/uv/getting-started/installation/)
+
+You can now run `uvx cvdpack` as shown below. You do not need to manually install the tool to use the cli. 
 
 ##### Optional: install cvdpack package
 
-You can use `uvx` or `uv tool run` as shown below WITHOUT installing cvdpack first. 
-
-Installing the python package is only necessary if you want to use the python interface
+Installing the python package is only necessary if you want to use the python interface. choose one:
 ```bash
 uv pip install cvdpack
-```
-
-##### Non-uv installation
-
-Follow ffmpeg instructions as shown above, and create your own conda environmnent if you wish. Then:
-```bash
 pip install cvdpack
 ```
 
