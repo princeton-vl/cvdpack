@@ -34,11 +34,14 @@ def save_any_image(
     img: np.ndarray,
     path: Path,
 ):
+    logger.debug(f"Saving {img.shape=} {img.dtype=} to {path=}")
+
     match path.suffix, img.dtype:
         case ((".png" | ".jpg" | ".jpeg"), np.uint8 | np.uint16):
-            if img.ndim == 3 and img.shape[-1] != 3:
+            if img.ndim == 3 and img.shape[-1] not in (1, 3, 4):
                 raise ValueError(
-                    f"Unhandled {img.shape=} for {path=}, expected no channels (WxH) or 3 channels (WxHx3)"
+                    f"Unhandled {img.shape=} for {path=}, expected no channels (WxH) or 3 channels (WxHx3) or 4 channels (WxHx4)"
+                    "These correspond to grayscale, RGB or RGBA images. But no format exists for 2channel or 5+channel"
                 )
             cv2.imwrite(str(path), img)
         case ".npy", _:
@@ -173,7 +176,7 @@ def format_template(
     if isinstance(template, Path):
         res = Path(res)
 
-    logger.debug(f"{format_template.__name__} {template=} -> {res=}, {matched=}")
+    #logger.debug(f"{format_template.__name__} {template=} -> {res=}, {matched=}")
 
     if return_matched:
         return res, matched

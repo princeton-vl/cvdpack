@@ -33,10 +33,11 @@ ALLOW_LOSSY_RGB_ENCODE = os.environ.get(
 ) == "1"
 
 PROPS_TO_ENCODER_PIXFMT = {
-    ("uint8", 3): ("ffv1", "rgb24") if not ALLOW_LOSSY_RGB_ENCODE else ("libx265", "yuv444p"),
-    ("uint16", 1): ("ffv1", "gray16le"),
-    ("uint16", 3): ("ffv1", "rgb48"),
-    ("uint8", 1): ("ffv1", "gray"),
+    ("uint8", 1): ("ffv1", "gray"), # used for binary masks or <256 segmentation labels
+    ("uint8", 3): ("ffv1", "rgb24") if not ALLOW_LOSSY_RGB_ENCODE else ("libx265", "yuv444p"), # used for rgb video or sometimes normals
+    ("uint16", 1): ("ffv1", "gray16le"), # used for 1channel GT e.g. quantized depth
+    ("uint16", 3): ("ffv1", "rgb48"), # used for multichannel GT e.g. quantized flow
+    ("uint16", 4): ("ffv1", "rgba64le"), # used for packing float32s e.g. flow as 2xfloat32 becomes 4xuint16
 }
 
 FFMPEG = os.environ.get(ENVIRON_KEYS["ffmpeg"], "ffmpeg")
@@ -218,7 +219,7 @@ def pack_video(
     ffmpeg_args.extend(["-pix_fmt", pix_fmt, "-an", str(output_video_path)])
 
     command = " ".join(ffmpeg_args)
-    print(f"Packing {input_frames_path=} to {output_video_path=}, {command=}")
+    logger.info(f"Packing {input_frames_path=} to {output_video_path=}, {command=}")
     subprocess.check_output(ffmpeg_args)
 
     return command

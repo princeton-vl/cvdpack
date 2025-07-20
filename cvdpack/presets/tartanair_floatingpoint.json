@@ -16,8 +16,7 @@
             "original_path_template": "{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}_{gt_type}.npy",
             "packed_path_template": "{scene}/{split}/{vid}/{gt_type}_{cam}.mkv",
             "packing": {
-                "method": "ONECHANNEL_F32_AS_2INT16",
-                "scalar": 1000,
+                "method": "F32_AS_2INT16",
                 "out_of_bounds_method": "error"
             }
         },
@@ -25,8 +24,7 @@
             "original_path_template": "{scene}/{split}/{vid}/{gt_type}/{frame:06d}_{framenext:06d}_{gt_type}.npy",
             "packed_path_template": "{scene}/{split}/{vid}/{gt_type}.mkv",
             "packing": {
-                "method": "MULTICHANNEL_TO_F16_AS_INT16",
-                "scalar": 1000,
+                "method": "F32_AS_2INT16",
                 "out_of_bounds_method": "error"
             }
         },

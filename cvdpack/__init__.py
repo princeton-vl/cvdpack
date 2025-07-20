@@ -13,8 +13,8 @@ from .pack_frames import (
     CheckBoundsPacker,
     LinearQuantizeIntPacker,
     InvQuantizeInt16Packer,
-    OneChannelF32As2Int16ReinterpretPacker,
-    F32ToF16ToInt16ReinterpretPacker,
+    F32As2Int16ReinterpretPacker,
+    F16ToInt16ReinterpretPacker,
 )
 
 from .pack_timeseries import (

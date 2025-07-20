@@ -137,7 +137,11 @@ def _process_video(
     job: Job,
     tmp_folder: Path,
 ):
-    packer = pack_frames.get_channel_packer(job.config.get("packing"))
+    packer = (
+        pack_frames.get_channel_packer(job.config.get("packing"))
+        if "packing" in job.config
+        else None
+    )
 
     frame_start = job.config.get("frame_start", 0)
     frame_step = job.config.get("frame_step", 1)
@@ -774,31 +778,34 @@ def main():
     logger.setLevel(args.loglevel)
 
     config_path = args.config
-    if config_path is None and args.action.endswith("_dataset"):
+    if config_path is None:
         config_path = args.input / "cvdpack.json"
 
-    if config_path is not None:
+    if args.action == "copy" and not config_path.exists():
+        config = None
+    else:
         with config_path.open("r") as f:
             config = json.load(f)
         config_version = config.get("metadata", {}).get("cvdpack_version")
 
-        if config.get("metadata", {}).get("compatibility_version", 0) != compatibility_version:
-            raise ValueError(
-                f"Config {config_path} had compatibility version {config.get('metadata', {}).get('compatibility_version', 0)} "
-                f"which is different from installed {compatibility_version} due to cvdpack=={__version__}"
-                "This may mean that the config is not compatible with the installed cvdpack, or that the config is outdated"
-                "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
-            )
-        
-        if (
-            config_version is not None
-            and not args.no_verify_version
-            and config_version != __version__
-        ):
-            logger.warning(
-                f"Config {config_path} was made for cvdpack version {config_version} which does not match installed cvdpack={__version__} "
-                f"This should be safe since {compatibility_version=} matched correctly, but there is a minute chance the compatibility version could be misconfigured"
-            )
+    compat_version = config.get("metadata", {}).get("compatibility_version", None)
+    if compat_version is not None and compat_version != compatibility_version:
+        raise ValueError(
+            f"Config {config_path} had compatibility version {compat_version} cvdpack=={config_version}"
+            f"which is different from installed {compatibility_version} due to cvdpack=={__version__}"
+            "This may mean that the config is not compatible with the installed cvdpack, or that the config is outdated"
+            "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
+        )
+    
+    if (
+        config_version is not None
+        and not args.no_verify_version
+        and config_version != __version__
+    ):
+        logger.warning(
+            f"Config {config_path} was made for cvdpack version {config_version} which does not match installed cvdpack={__version__} "
+            f"This should be safe since {compatibility_version=} matched correctly, but there is a minute chance the compatibility version could be misconfigured"
+        )
 
         
     subset = util.parse_dictlist_strings(args.subset)

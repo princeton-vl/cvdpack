@@ -2,7 +2,7 @@
 
 A tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos. 
 
-Reduce your dataset size by up to 90+%, with minimal changes in groundtruth accuracy!
+Reduce your dataset size by up to 80+%, with minimal changes in groundtruth accuracy!
 
 :warning: Make a backup of your data, and doublecheck your experimental results are not changed by uvx cvdpack :warning:
 
@@ -40,15 +40,37 @@ Cvdpack works for many dataset - see `--help` for all options and `--presets`, o
 
 Commands will print very little output unless using -v or -d. 
 
-##### Pack/unpack one scene of tartanair locally. 
+##### Pack/unpack one scene of tartanair locally with minimal image/gt changes
 Commands shown are for a single scene and video, remove --subset to do the full thing
 ```bash
-uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_quantized.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
-
+uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_floatingpoint.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
 uvx cvdpack unpack --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 10 --tmp_folder data/tmp/ --subset scene=abandonedfactory vid=P000 -v
 ```
-Runtime for one scene is approx 31sec and 28sec respectively on a AMD EPYC 7713P 64-core machine.
-Filesizes are approx 8.6GB for the raw abandonedfactory/Hard/P000 scene, 526M for the packed version (94% savings)
+Runtime for one scene is approx 93sec to pack and TODO to unpack on an AMD EPYC 7713P.
+Filesizes are approx 8.6GB for the raw abandonedfactory/Hard/P000 scene, 2.6G for the packed version (70% savings)
+
+##### Pack/unpack one scene of tartanair locally with quantization and small RGB changes
+
+```bash
+CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_quantized.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
+uvx cvdpack unpack --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 10 --tmp_folder data/tmp/ --subset scene=abandonedfactory vid=P000 -v
+```
+Runtime for one scene is approx 54sec and TODO respectively on an AMD EPYC 7713P.
+Filesizes are approx 8.6GB for raw TartanAir vs 1.3GB for packed version (84% savings)
+
+Should achieve significantly better compression, especially for large amounts of RGB data. Ground truth (currently) still uses ffv1 due to its support for uint16, so do not expect improvements except for 3 channel uint8 data. 
+
+Unpacking uses the same command as above, but all your users will be required to install libx265-dev, which may (?) require a paid license for users in industry, therefore limiting the reach of your data.  
+
+Known compromises:
+- CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 allows libx265 with yuv444p pixels - will mean small fraction of pixel values change by +=1 or +=2.
+- libx265 (should) have significantly slower encoding speed, but faster overall decoding speed. 
+- presets/tartanair_quantized.json will clip ground truth to certain min/max values, which will appear as nan when unpacked
+- presets/tartanair_quantized.json will store intermediate data as uint16. This means flow has ~0.01px precision, depth has variable precision (very large error at 500m+)
+
+Many tradeoffs are adjustable via the json config file:
+- Choose between dynamic range and precision by adjusting the min/max quantize values
+- Choose which channels are quantized vs float16 vs float32 (they dont all have to be the same)
 
 ##### Reorganize a dataset
 ```bash
@@ -80,17 +102,7 @@ sudo apt install libx265-dev
 CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_quantized.json --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
-Achieves significantly better compression, especially for large amounts of RGB data. Ground truth (currently) still uses ffv1 due to its support for uint16, so do not expect improvements except for 3 channel uint8 data. 
-
-Unpacking uses the same command as above, but all your users will be required to install libx265-dev, which may (?) require a paid license for users in industry, therefore limiting the reach of your data.  
-
-Compromises:
-- CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 allows libx265 with yuv444p pixels - will mean small fraction of pixel values change by +=1 or +=2.
-- libx265 (should) have significantly slower encoding speed, but faster overall decoding speed. 
-- presets/tartanair_quantized.json will clip ground truth to certain min/max values, which will appear as nan when unpacked
-- presets/tartanair_quantized.json will store intermediate data as uint16. This means flow has ~0.01px precision, depth has variable precision (very large error at 500m+)
-
-These tradeoffs are adjustable in the config file, especially tradeoffs between dynamic range and precision (total unique uint16 values is constant)
+Unpacked command is unchanged. See warnings above RE losses and accessibility of the data.
 
 ##### Partially pack/unpack TartanAir 
 
@@ -176,6 +188,21 @@ uv run -m cvdpack.checkdiff --input data/TartanAir/abandonedfactory/Hard/P000/fl
 
 Note: you can also run these with concrete single image paths and not use --subset
 
+##### Integration test:
+
+We will always make sure this sequence of commands runs without error:
+
+```bash
+
+rm -rf data/tmp*/
+
+/usr/bin/time -o data/pack_lossless_time.txt uv run cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed_lossless/ --config presets/tartanair_floatingpoint.json --tmp_folder data/tmp2/ --n_workers 10 --subset scene=abandonedfactory vid=P000
+CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 /usr/bin/time -o data/pack_lossy_time.txt uv run cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed_lossy/ --config presets/tartanair_quantized.json --tmp_folder data/tmp3/ --n_workers 10 --subset scene=abandonedfactory vid=P000
+/usr/bin/time -o data/unpack_lossless_time.txt uv run cvdpack unpack --input data/TartanAir_packed_lossless --output data/TartanAir_unpacked_lossless --n_workers 10 --tmp_folder data/tmp1/ --subset scene=abandonedfactory vid=P000
+/usr/bin/time -o data/unpack_lossy_time.txt uv run cvdpack unpack --input data/TartanAir_packed_lossy --output data/TartanAir_unpacked_lossy --n_workers 10 --tmp_folder data/tmp1/ --subset scene=abandonedfactory vid=P000
+
+
+```
 
 ##### TODOs
 
@@ -189,6 +216,7 @@ No particular roadmap or intention to complete:
 - [ ] Provide a default dataloader which handles any packed dataset w.r.t cvdpack.json
     - [ ] Primary task: Dataload and unpack frames from a packed version of the dataset
     - [ ] Dataload from mkv version of the dataset ??
+- [ ] Add a `cvdpack analyze` command which finds the best quantize bounds, float16 scalars, or seg dtypes for a given dataset
 - [ ] Use gpu accelerated ffmpeg decoders for faster unpack at startup? are there any lossless ones?
 - [ ] Pack non-video framesets as compressed & chunked h5 (?) arrays
 - [ ] Store surface normals / unit sphere data as 2 angles, instead of 3 coords for 2dof. Use 2xuint16 quant or 2xfloat16 packing
