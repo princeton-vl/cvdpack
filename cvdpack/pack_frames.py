@@ -29,6 +29,20 @@ class PackMethod(Enum):
     def from_str(cls, s: str):
         return cls(s.lower())
 
+def _mask_to_nan_or_error(
+    img: np.ndarray,
+    mask: np.ndarray,
+    oob_method: Literal["nan", "nan_warn", "error"],
+    msg: str,
+):
+    match oob_method:
+        case "nan":
+            img[mask] = np.nan
+        case "nan_warn":
+            img[mask] = np.nan
+            logger.warning(msg + ", will be interpreted as nan")
+        case "error":
+            raise ValueError(msg)
 
 def _oob_to_nan_or_error(
     img: np.ndarray,
@@ -47,16 +61,7 @@ def _oob_to_nan_or_error(
     )
 
     img = img.copy()
-
-    match oob_method:
-        case "nan":
-            img[oob_mask] = np.nan
-        case "nan_warn":
-            img[oob_mask] = np.nan
-            logger.warning(msg + ", will be interpreted as nan")
-        case "error":
-            raise ValueError(msg)
-        
+    _mask_to_nan_or_error(img, oob_mask, oob_method)
     return img
 
 
@@ -187,6 +192,7 @@ class OneChannelF32As2Int16ReinterpretPacker(Packer):
         # this puts an extra channel of dim 2 at the end, which is what we want.
         assert img.dtype == np.float32, img.dtype
         img_quant = img.view(np.uint16)
+
         return img_quant
     
     def unpack(self, img_packed: np.ndarray):
@@ -201,22 +207,37 @@ class OneChannelF32As2Int16ReinterpretPacker(Packer):
 class F32ToF16ToInt16ReinterpretPacker(Packer):
 
     """
-    Casts every f32 as f16, then reinterprets uint16.
+    Casts every f32 as f16, then reinterprets to uint16.
 
-    We would prefer to just reinterpret as uint32, but to my knowledge 
-    there are no 32bit-channel png/mkv formats (2025-07-20)
+    Since we are losing precision, it may be useful to multiply by a scalar then undo it later, so we can have
+    more precision but over a smaller dynamic range. If this overflows, we will nan the value and warn/error.
+
+    We would prefer to just reinterpret as uint32, but to my knowledge there are no 32bit-channel png/mkv formats (2025-07-20)
     """
 
-    def __init__(self, scalar: float):
+    def __init__(
+        self,
+        scalar: float,
+        out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "error",
+    ):
         self.scalar = scalar
+        self.out_of_bounds_method = out_of_bounds_method
 
     def pack(self, img: np.ndarray):
         assert img.dtype == np.float32, img.dtype
-        return (
-            (img * self.scalar)
-            .astype(np.float16)
-            .view(dtype=np.uint16)  # reinterpret cast
-        )
+        
+        mult = (img * self.scalar).astype(np.float16)
+
+        # check for overflow
+        isinf = np.isinf(mult)
+        if isinf.any():
+            msg = (
+                f"{self.__class__.__name__} had {isinf.astype(np.float32).mean()=}% "
+                f"this likely means that {self.scalar=} * {img.max()=} is too large and caused overflow for float16"
+            )
+            _mask_to_nan_or_error(mult, isinf, self.out_of_bounds_method,msg)
+
+        return mult.view(dtype=np.uint16)  # reinterpret cast
     
     def unpack(self, img_packed: np.ndarray):
         if img_packed.ndim == 2:
@@ -258,7 +279,7 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
     max_orig_val = packing_config.get("max_orig_val", None)
     to_dtype = DTYPE_MAP[packing_config["to_dtype"]] if "to_dtype" in packing_config else None
     from_dtype = DTYPE_MAP[packing_config["from_dtype"]] if "from_dtype" in packing_config else None
-    out_of_bounds_method = packing_config.get("out_of_bounds_method", "nan_warn")
+    out_of_bounds_method = packing_config.get("out_of_bounds_method")
 
     match PackMethod.from_str(packing_config["method"]):
         case PackMethod.LINEAR:
@@ -279,11 +300,13 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
             )
         case PackMethod.ONECHANNEL_F32_AS_2INT16:
             return OneChannelF32As2Int16ReinterpretPacker(
-                scalar=packing_config.get("scalar", 1.0)
+                scalar=packing_config.get("scalar", 1.0),
+                out_of_bounds_method=out_of_bounds_method,
             )
         case PackMethod.MULTICHANNEL_TO_F16_AS_INT16:
             return F32ToF16ToInt16ReinterpretPacker(
-                scalar=packing_config.get("scalar", 1.0)
+                scalar=packing_config.get("scalar", 1.0),
+                out_of_bounds_method=out_of_bounds_method,
             )
         case PackMethod.CHECKBOUNDS:
             return CheckBoundsPacker(
