@@ -33,6 +33,8 @@ PROPS_TO_ENCODER_PIXFMT = {
     ("uint8", 1): ("libx265", "gray"),
 }
 
+FFMPEG = os.environ.get(ENVIRON_KEYS["ffmpeg"], "ffmpeg")
+FFMPEG_ARGS = [FFMPEG, "-nostdin", "-y", "-hide_banner"]
 
 def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False):
     if "{frame}" in str(input_path):
@@ -73,7 +75,7 @@ def unpack_video(
         output_frames_path_template
     )
 
-    ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
+    ffmpeg_args = [ffmpeg, "-nostdin","-y", "-hide_banner"]
 
     if loglevel != logging.DEBUG:
         ffmpeg_args.extend(["-loglevel", "error"])
@@ -133,7 +135,7 @@ def pack_video(
             "Videos which start at non-zero frame numbers are not yet supported, but possibly could be. "
             "If your video _should_ be starting at zero but you see this error, contact the developers."
         )
-    ffmpeg_args = [ffmpeg, "-y", "-hide_banner"]
+    ffmpeg_args = FFMPEG_ARGS.copy()
 
     if loglevel != logging.DEBUG:
         ffmpeg_args.extend(["-loglevel", "error"])

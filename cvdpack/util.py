@@ -10,8 +10,8 @@ import logging
 logger = logging.getLogger("cvdpack")
 
 ENVIRON_KEYS = {
-    "array_max": "CVDPACK_SLURM_ARRAY_MAX",
     "ffmpeg": "CVDPACK_FFMPEG",
+    "array_max": "CVDPACK_SLURM_ARRAY_MAX",
     "ffv1_args": "CVDPACK_FFV1_ARGS",
     "libx265_args": "CVDPACK_LIBX265_ARGS",
 }
@@ -166,3 +166,20 @@ def format_template(
     if return_matched:
         return res, matched
     return res
+
+def parse_dictlist_strings(argstrings: list[str] | None):
+    if argstrings is None:
+        return None
+
+    args = {}
+    for arg in argstrings:
+        parts = arg.split("=")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid {arg=}, had {len(parts)=}")
+        k, v = parts
+        if "," in v:
+            v = list(v.split(","))
+        args[k] = v
+
+    logger.debug(f"{parse_dictlist_strings.__name__} mapped {argstrings=} -> {args=}")
+    return args

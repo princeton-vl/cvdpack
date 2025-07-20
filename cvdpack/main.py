@@ -24,8 +24,8 @@ import numpy as np
 from tqdm import tqdm
 
 from cvdpack import __version__
-from cvdpack.util import match_template_paths, format_template, ENVIRON_KEYS
-from cvdpack.pack_frame import PackMethod, pack_frameset, unpack_frameset
+from cvdpack import util
+from cvdpack import pack_frames
 from cvdpack.pack_timeseries import pack_video, unpack_video, pack_tarball, unpack_tarball
 
 try:
@@ -35,28 +35,7 @@ except ImportError:
 
 logger = logging.getLogger("cvdpack")
 
-SLURM_ARRAY_MAX = int(os.environ.get(ENVIRON_KEYS["array_max"], 500))
-
-PARALELL_LEVELS = [
-    "scene",
-    "vid",
-    "cam",
-    "gttype",
-]
-
-DTYPE_MAP = {
-    "uint8": np.uint8,
-    "uint16": np.uint16,
-    "uint32": np.uint32,
-    "uint64": np.uint64,
-    "float16": np.float16,
-    "float32": np.float32,
-    "float64": np.float64,
-}
-
-
-
-
+SLURM_ARRAY_MAX = int(os.environ.get(util.ENVIRON_KEYS["array_max"], 500))
 
 class GtType(Enum):
     RGB = "rgb"
@@ -102,7 +81,7 @@ def find_jobs(
     )
 
     subset = {**subset, "gt_type": gt_type}
-    input_template, matched_keys = format_template(
+    input_template, matched_keys = util.format_template(
         input_template, subset, return_matched=True
     )
     matched_keys.add("gt_type")
@@ -114,7 +93,7 @@ def find_jobs(
         search_template = input_template
         input_template_extra = None
 
-    paths = list(match_template_paths(search_template))
+    paths = list(util.match_template_paths(search_template))
 
     skipped_for_lazy = 0
     jobs = []
@@ -126,13 +105,13 @@ def find_jobs(
 
         vid_info.update(subset)
 
-        output_path = format_template(output_template, vid_info, allow_missing=[])
+        output_path = util.format_template(output_template, vid_info, allow_missing=[])
         if lazy and output_path.exists():
             skipped_for_lazy += 1
             continue
 
         if input_template_extra:
-            extra = format_template(input_template_extra, vid_info)
+            extra = util.format_template(input_template_extra, vid_info)
             vid_input_path = vid_input_path / extra
 
         job = Job(
@@ -152,30 +131,13 @@ def find_jobs(
     return jobs
 
 
-def _parse_k_equals_v_strs(k_equals_v_strs: list[str] | None):
-    if k_equals_v_strs is None:
-        return None
-
-    logger.debug(f"_parse_k_equals_v_strs received: {k_equals_v_strs}")
-    args = {}
-    for arg in k_equals_v_strs:
-        parts = arg.split("=")
-        if len(parts) != 2:
-            raise ValueError(f"Invalid {arg=}, had {len(parts)=}")
-        k, v = parts
-        if "," in v:
-            v = list(v.split(","))
-        args[k] = v
-    return args
-
-
 def _process_video(
     input_path: Path,
     output_path: Path,
     job: Job,
     make_tmp_folder: Callable,
 ):
-    metadata_commands = []
+    packer = pack_frames.get_channel_packer(job.config.get("packing"))
 
     match input_path.suffix, output_path.suffix:
         case ".png", ".mkv":
@@ -185,73 +147,53 @@ def _process_video(
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
             )
-            metadata_commands.append(command)
         case _, ".mkv":
             tmp_template = make_tmp_folder() / "{frame:06d}.png"
-            pack_frameset(
+            pack_frames.pack_frameset(
                 input_path,
                 tmp_template,
-                to_dtype=DTYPE_MAP[job.config["pack_dtype"]],
-                pack_method=PackMethod.from_str(job.config["pack_method"]),
-                min_orig_val=float(job.config.get("min_orig_val", 0)),
-                max_orig_val=float(job.config.get("max_orig_val", 1)),
-                out_of_bounds_method=job.config.get("out_of_bounds_method", "nan_warn"),
+                packer=packer,
             )
-            command = pack_video(
+            pack_video(
                 tmp_template,
                 output_path,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
             )
-            metadata_commands.append(command)
         case _, ".tar.gz":
             pack_tarball(input_path, output_path)
         case ".mkv", ".png":
-            command = unpack_video(
+            unpack_video(
                 input_path,
                 output_path,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
             )
-            metadata_commands.append(command)
         case ".png" | ".jpg" | ".jpeg" | ".npy", ".png":
-            pack_frameset(
+            pack_frames.pack_frameset(
                 input_path,
                 output_path,
-                to_dtype=DTYPE_MAP[job.config["pack_dtype"]],
-                pack_method=PackMethod.from_str(job.config["pack_method"]),
-                min_orig_val=float(job.config["min_orig_val"]),
-                max_orig_val=float(job.config["max_orig_val"]),
-                out_of_bounds_method=job.config["out_of_bounds_method"],
+                packer=packer,
             )
         case ".png", _:
-            unpack_frameset(
+            pack_frames.unpack_frameset(
                 input_path,
                 output_path,
-                to_dtype=DTYPE_MAP[job.config["unpack_dtype"]],
-                pack_method=PackMethod.from_str(job.config["pack_method"]),
-                min_orig_val=float(job.config["min_orig_val"]),
-                max_orig_val=float(job.config["max_orig_val"]),
-                unpack_channels_last=job.config.get("unpack_channels_last", None),
+                packer=packer,
             )
         case ".mkv", _:
             tmp_frames = make_tmp_folder() / "{frame:06d}.png"
-            command = unpack_video(
+            unpack_video(
                 input_path,
                 tmp_frames,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
             )
-            unpack_frameset(
+            pack_frames.unpack_frameset(
                 tmp_frames,
                 output_path,
-                to_dtype=DTYPE_MAP[job.config["unpack_dtype"]],
-                pack_method=PackMethod.from_str(job.config["pack_method"]),
-                min_orig_val=float(job.config["min_orig_val"]),
-                max_orig_val=float(job.config["max_orig_val"]),
-                unpack_channels_last=job.config.get("unpack_channels_last", None),
+                packer=packer,
             )
-            metadata_commands.append(command)
         case ".tar.gz", _:
             unpack_tarball(input_path, output_path)
         case ".txt", ".npy":
@@ -268,8 +210,6 @@ def _process_video(
             shutil.copy(input_path, output_path)
         case _:
             raise ValueError(f"Invalid {input_path.suffix=} {output_path.suffix=}")
-
-    return metadata_commands
 
 
 def process_video_job(job: Job):
@@ -301,7 +241,7 @@ def process_video_job(job: Job):
         return tmp_path
 
     try:
-        metadata_commands = _process_video(
+        _process_video(
             input_path,
             output_path,
             job,
@@ -311,10 +251,6 @@ def process_video_job(job: Job):
     finally:
         if tmp_path is not None:
             shutil.rmtree(tmp_path)
-
-    return {
-        "commands": metadata_commands,
-    }
 
 
 def wait_jobs(launched_jobs, pbar):
@@ -349,19 +285,19 @@ def execute_jobs(
     log_folder: Path,
     func: Callable,
     jobs: list[dict],
-    paralell_mode: Literal["multiprocess", "slurm", "none"],
+    parallel_mode: Literal["multiprocess", "slurm", "none"],
     n_workers: int | None,
     slurm_args: dict | None,
     cpus_per_worker: int | None = None,
 ):
-    logger.info(f"Executing {len(jobs)} jobs with {paralell_mode=} {n_workers=}")
+    logger.info(f"Executing {len(jobs)} jobs with {parallel_mode=} {n_workers=}")
 
     if n_workers is None:
         for job in jobs:
             func(job)
         return
 
-    match paralell_mode:
+    match parallel_mode:
         case "multiprocess":
             with multiprocessing.Pool(n_workers) as pool:
                 pool.map(func, jobs)
@@ -397,7 +333,7 @@ def execute_jobs(
                     f"Please check {log_folder} for ID_log.err and ID_log.out for each ID in {crashed}"
                 )
         case _:
-            raise ValueError(f"Invalid {paralell_mode=}")
+            raise ValueError(f"Invalid {parallel_mode=}")
 
 
 def decide_dataset_job_templates(
@@ -495,7 +431,7 @@ def pack_dataset(
     output_folder: Path,
     steps: list[str] | None,
     config: dict | None,
-    paralell_mode: Literal["multiprocess", "slurm", "none"],
+    parallel_mode: Literal["multiprocess", "slurm", "none"],
     slurm_args: dict | None,
     n_workers: int,
     tmp_folder: Path,
@@ -545,7 +481,7 @@ def pack_dataset(
         log_folder=output_folder / "logs",
         func=process_video_job,
         jobs=jobs,
-        paralell_mode=paralell_mode,
+        parallel_mode=parallel_mode,
         n_workers=n_workers,
         slurm_args=slurm_args,
         cpus_per_worker=cpus_per_worker,
@@ -557,7 +493,7 @@ def unpack_dataset(
     output_folder: Path,
     steps: list[str] | None,
     config: dict | None,
-    paralell_mode: Literal["multiprocess", "slurm", "none"],
+    parallel_mode: Literal["multiprocess", "slurm", "none"],
     slurm_args: dict | None,
     n_workers: int,
     subset: dict | None,
@@ -607,7 +543,7 @@ def unpack_dataset(
         log_folder=output_folder / "logs",
         func=process_video_job,
         jobs=jobs,
-        paralell_mode=paralell_mode,
+        parallel_mode=parallel_mode,
         n_workers=n_workers,
         slurm_args=slurm_args,
         cpus_per_worker=cpus_per_worker,
@@ -641,7 +577,7 @@ def validate_args(args: argparse.Namespace):
         logger.warning(
             f"Requested {args.n_workers=} but only {SLURM_ARRAY_MAX=} can actually be used."
             f"This is because many clusters often limit arrays to 1000 jobs, but the job array e.g. for tartanair is 3000+. "
-            f"Set {ENVIRON_KEYS['array_max']} to a larger value if this is appropriate forr your cluster"
+            f"Set {util.ENVIRON_KEYS['array_max']} to a larger value if this is appropriate forr your cluster"
         )
 
     return args
@@ -794,7 +730,7 @@ def copy_files(
 
     input_files = [
         (tvals, path)
-        for tvals, path in match_template_paths(input_template)
+        for tvals, path in util.match_template_paths(input_template)
         if included_in_filter(tvals, subset)
     ]
 
@@ -804,7 +740,7 @@ def copy_files(
         )
 
     output_files = [
-        format_template(output_template, file_info) for file_info, _ in input_files
+        util.format_template(output_template, file_info) for file_info, _ in input_files
     ]
     input_files = [f for _, f in input_files]
 
@@ -862,6 +798,20 @@ def main():
                 f"Config {config_path} was made for cvdpack version {config_version} which does not match installed cvdpack={__version__} "
                 "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
             )
+        
+    subset = util.parse_dictlist_strings(args.subset)
+    dataset_jobprocess_kwargs = dict(
+        steps=args.steps,
+        config=config,
+        parallel_mode=args.parallel_mode,
+        slurm_args=util.parse_dictlist_strings(args.slurm_args),
+        n_workers=args.n_workers,
+        tmp_folder=args.tmp_folder,
+        subset=subset,
+        lazy=args.lazy,
+        cpus_per_worker=args.cpus_per_worker,
+        loglevel=args.loglevel,
+    )
 
     match args.action:
         case "pack":
@@ -869,46 +819,15 @@ def main():
                 raise ValueError(
                     f"pack_dataset requires input to be a directory: {args.input=}"
                 )
-            pack_dataset(
-                args.input,
-                args.output,
-                args.steps,
-                config,
-                args.parallel_mode,
-                slurm_args=_parse_k_equals_v_strs(args.slurm_args),
-                n_workers=args.n_workers,
-                tmp_folder=args.tmp_folder,
-                subset=_parse_k_equals_v_strs(args.subset),
-                lazy=args.lazy,
-                cpus_per_worker=args.cpus_per_worker,
-                loglevel=args.loglevel,
-            )
+            pack_dataset(args.input, args.output, **dataset_jobprocess_kwargs)
         case "unpack":
             if not args.input.is_dir():
                 raise ValueError(
                     f"unpack_dataset requires input to be a directory: {args.input=}"
                 )
-            unpack_dataset(
-                args.input,
-                args.output,
-                args.steps,
-                config,
-                args.parallel_mode,
-                slurm_args=_parse_k_equals_v_strs(args.slurm_args),
-                n_workers=args.n_workers,
-                tmp_folder=args.tmp_folder,
-                subset=_parse_k_equals_v_strs(args.subset),
-                lazy=args.lazy,
-                cpus_per_worker=args.cpus_per_worker,
-                loglevel=args.loglevel,
-            )
+            unpack_dataset(args.input, args.output, **dataset_jobprocess_kwargs)
         case "copy":
-            copy_files(
-                args.input,
-                args.output,
-                subset=_parse_k_equals_v_strs(args.subset),
-                loglevel=args.loglevel,
-            )
+            copy_files(args.input, args.output, subset=subset, loglevel=args.loglevel)
         case _:
             raise ValueError(f"Invalid {args.action=}")
 

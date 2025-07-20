@@ -8,6 +8,15 @@ from .util import match_template_paths, format_template, load_any_image, save_an
 
 logger = logging.getLogger("cvdpack")
 
+DTYPE_MAP = {
+    "uint8": np.uint8,
+    "uint16": np.uint16,
+    "uint32": np.uint32,
+    "uint64": np.uint64,
+    "float16": np.float16,
+    "float32": np.float32,
+    "float64": np.float64,
+}
 
 class PackMethod(Enum):
     LINEAR = "linear"
@@ -26,15 +35,14 @@ def _oob_to_nan_or_error(
     min_orig_val: float,
     max_orig_val: float,
     oob_method: Literal["nan", "nan_warn", "error"],
-    desc: str = "",
 ):
     oob_mask = np.logical_or(img < min_orig_val, img > max_orig_val)
     if not oob_mask.any():
-        return
+        return img
 
     oob_pct = 100 * oob_mask.astype(np.float32).mean()
     msg = (
-        f"file {desc} had {img.min()=:.2f}, {img.max()=:.2f} "
+        f"Found {img.min()=:.2f}, {img.max()=:.2f} "
         f"which exceeds quantize range [{min_orig_val:.2f}, {max_orig_val:.2f}]. {oob_pct:.2f}% were out of bounds."
     )
 
@@ -109,7 +117,7 @@ class LinearQuantizeIntPacker(Packer):
 
     def pack(self, img: np.ndarray):
         img = _oob_to_nan_or_error(
-            img, self.min_orig_val, self.max_orig_val, self.out_of_bounds_method, desc="linear"
+            img, self.min_orig_val, self.max_orig_val, self.out_of_bounds_method,
         )
         img_norm = (img - self.min_orig_val) / (self.max_orig_val - self.min_orig_val)
         return _pack_to_int_with_nan_to_imax(img_norm, self.to_dtype)
@@ -244,10 +252,13 @@ class CheckBoundsPacker(Packer):
     
 def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
     
+    if packing_config is None:
+        return None
+
     min_orig_val = packing_config.get("min_orig_val", None)
     max_orig_val = packing_config.get("max_orig_val", None)
-    to_dtype = packing_config.get("to_dtype", None)
-    from_dtype = packing_config.get("from_dtype", None)
+    to_dtype = DTYPE_MAP[packing_config.get("to_dtype", None)]
+    from_dtype = DTYPE_MAP[packing_config.get("from_dtype", None)]
     out_of_bounds_method = packing_config.get("out_of_bounds_method", "nan_warn")
 
     match PackMethod.from_str(packing_config["method"]):
@@ -255,6 +266,7 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
             return LinearQuantizeIntPacker(
                 min_orig_val=min_orig_val,
                 max_orig_val=max_orig_val,
+                from_dtype=from_dtype,
                 to_dtype=to_dtype,
                 out_of_bounds_method=out_of_bounds_method,
             )
@@ -262,7 +274,9 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
             return InvQuantizeInt16Packer(
                 min_orig_val=min_orig_val,
                 max_orig_val=max_orig_val,
+                from_dtype=from_dtype,
                 to_dtype=to_dtype,
+                out_of_bounds_method=out_of_bounds_method,
             )
         case PackMethod.ONECHANNEL_F32_AS_2INT16:
             return OneChannelF32As2Int16ReinterpretPacker(
