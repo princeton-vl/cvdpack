@@ -5,6 +5,7 @@ import subprocess
 import os
 import tarfile
 from pathlib import Path
+from typing import Literal
 
 from .util import (
     match_template_paths, 
@@ -26,11 +27,16 @@ ENCODER_ARGS = {
     ),
 }
 
+ALLOW_LOSSY_RGB_ENCODE = os.environ.get(
+    ENVIRON_KEYS["allow_lossy_rgb_encode"],
+    "0",
+) == "1"
+
 PROPS_TO_ENCODER_PIXFMT = {
-    ("uint8", 3): ("libx265", "yuv444p"),
+    ("uint8", 3): ("ffv1", "rgb24") if not ALLOW_LOSSY_RGB_ENCODE else ("libx265", "yuv444p"),
     ("uint16", 1): ("ffv1", "gray16le"),
     ("uint16", 3): ("ffv1", "rgb48"),
-    ("uint8", 1): ("libx265", "gray"),
+    ("uint8", 1): ("ffv1", "gray"),
 }
 
 FFMPEG = os.environ.get(ENVIRON_KEYS["ffmpeg"], "ffmpeg")
@@ -102,13 +108,12 @@ def unpack_video(
         output_path = output_frames_path_template.parent / output_filename
 
     ffmpeg_args = FFMPEG_ARGS.copy()
-    ffmpeg_args += ["-start_number", str(frame_start)]
 
     if loglevel != logging.DEBUG:
         ffmpeg_args += ["-loglevel", "error"]
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
-    ffmpeg_args.extend(["-i", str(input_video_path), output_path])
+    ffmpeg_args.extend(["-i", str(input_video_path), "-start_number", str(frame_start), str(output_path)])
 
     command = " ".join(ffmpeg_args)
     logger.info(
@@ -140,6 +145,7 @@ def pack_video(
     ffmpeg: str = "ffmpeg",
     n_cpus: int | None = None,
     loglevel: int | None = None,
+    input_mode: Literal["txt", "indexes", "glob"] = "indexes",
 ):
         
     logger.info(f"{pack_video.__name__} {input_frames_path=} to {output_video_path=}")
@@ -177,33 +183,42 @@ def pack_video(
                 f"{input_frames_path} had frame {info['frame']} for {i=} {path=}"
                 f"but {frame_start=} {frame_step=} means we expected {frame_start + i * frame_step=}"
             )
-
-    input_mode = "txt"
+        
+    if input_mode == "indexes" and "{framenext}" in str(input_frames_path):
+        logger.warning(f"{input_frames_path=} contains {{framenext}} - using glob instead")
+        input_mode = "glob"
+        
     if input_mode == "txt":
         tmp_folder.mkdir(parents=True, exist_ok=True)
         input_txt_path = tmp_folder / "input.txt"
         assert not input_txt_path.exists(), f"{input_txt_path=} already exists"
         with input_txt_path.open("w") as f:
             for info, path in matched:
+                logger.debug(f"Adding {path=} to {input_txt_path=}")
+                print(f"file '{str(path.absolute())}'\n")
                 f.write(f"file '{str(path.absolute())}'\n")
         assert input_txt_path.exists(), f"Failed to create {input_txt_path=}"
-        ffmpeg_args.extend([
-            "-f", "concat", "-safe", "0", "-i", str(input_txt_path.absolute()),
-        ])
+
+        logger.warning(f"{input_mode=} may potentially drop frames. -concat treats every image as a video, and sometimes drops the last frame despite my efforts")
+        ffmpeg_args += ["-f", "concat", "-safe", "0", "-i", str(input_txt_path.absolute())]
+        ffmpeg_args += ["-fflags", "+genpts", "-avoid_negative_ts", "make_zero"] # needed to prevent invalid timestamps dropping frames
     elif input_mode == "glob":
-        raise NotImplementedError("Globbing input frames can cause incorrect frame numbers since it ignores -start_number")
-        ffmpeg_template = _template_name_to_ffmpeg_format(input_frames_path)
+        ffmpeg_template = input_frames_path.parent / _template_name_to_ffmpeg_format(input_frames_path.name)
+        ffmpeg_args.extend(["-i", str(ffmpeg_template.absolute()),])
+    elif input_mode == "indexes":
+        ffmpeg_template = input_frames_path.parent / _template_name_to_ffmpeg_format(input_frames_path.name, as_glob=True)
         ffmpeg_args.extend([
-            "-pattern_type", "glob", ffmpeg_template,
+            "-pattern_type", "glob", "-i", str(ffmpeg_template.absolute()),
         ])
     else:
         raise ValueError(f"Unknown input_mode {input_mode=}")
 
+    ffmpeg_args += ["-vsync", "0"] # NO DROPPING FRAMES, preserve exact timing
     ffmpeg_args.extend(encoder_args.split())
     ffmpeg_args.extend(["-pix_fmt", pix_fmt, "-an", str(output_video_path)])
 
     command = " ".join(ffmpeg_args)
-    logger.info(f"Packing {input_frames_path=} to {output_video_path=}, {command=}")
+    print(f"Packing {input_frames_path=} to {output_video_path=}, {command=}")
     subprocess.check_output(ffmpeg_args)
 
     return command

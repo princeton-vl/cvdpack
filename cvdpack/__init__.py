@@ -1,5 +1,7 @@
 __version__ = "0.0.2"
 
+compatibility_version = 1 # increment for every breaking change which affects the packed/unpacked data
+
 from .util import (
     match_template_paths,
     format_template,

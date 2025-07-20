@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from cvdpack import __version__
+from cvdpack import __version__, compatibility_version
 from cvdpack import util
 from cvdpack import pack_frames
 from cvdpack.pack_timeseries import pack_video, unpack_video, pack_tarball, unpack_tarball
@@ -781,15 +781,25 @@ def main():
         with config_path.open("r") as f:
             config = json.load(f)
         config_version = config.get("metadata", {}).get("cvdpack_version")
+
+        if config.get("metadata", {}).get("compatibility_version", 0) != compatibility_version:
+            raise ValueError(
+                f"Config {config_path} had compatibility version {config.get('metadata', {}).get('compatibility_version', 0)} "
+                f"which is different from installed {compatibility_version} due to cvdpack=={__version__}"
+                "This may mean that the config is not compatible with the installed cvdpack, or that the config is outdated"
+                "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
+            )
+        
         if (
             config_version is not None
             and not args.no_verify_version
             and config_version != __version__
         ):
-            raise ValueError(
+            logger.warning(
                 f"Config {config_path} was made for cvdpack version {config_version} which does not match installed cvdpack={__version__} "
-                "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
+                f"This should be safe since {compatibility_version=} matched correctly, but there is a minute chance the compatibility version could be misconfigured"
             )
+
         
     subset = util.parse_dictlist_strings(args.subset)
     dataset_jobprocess_kwargs = dict(
@@ -828,7 +838,11 @@ def main():
 
     config["metadata"]["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
     config["metadata"]["cvdpack_version"] = __version__
+    config["metadata"]["compatibility_version"] = compatibility_version
     config["metadata"]["args"] = vars(args)
+    config["metadata"]["environment"] = {
+        k: os.environ.get(v) for k, v in util.ENVIRON_KEYS.items()
+    }
     config["metadata"]["pack_runtime"] = time.time() - start_time
 
     if args.action in {"pack", "unpack"}:

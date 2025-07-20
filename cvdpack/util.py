@@ -14,6 +14,7 @@ ENVIRON_KEYS = {
     "array_max": "CVDPACK_SLURM_ARRAY_MAX",
     "ffv1_args": "CVDPACK_FFV1_ARGS",
     "libx265_args": "CVDPACK_LIBX265_ARGS",
+    "allow_lossy_rgb_encode": "CVDPACK_MINOR_VIDEO_ERROR",
 }
 
 def load_any_image(path: Path, allow_pickle: bool = False):
