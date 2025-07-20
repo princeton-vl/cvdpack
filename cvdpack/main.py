@@ -139,11 +139,16 @@ def _process_video(
 ):
     packer = pack_frames.get_channel_packer(job.config.get("packing"))
 
+    frame_start = job.config.get("frame_start", 0)
+    frame_step = job.config.get("frame_step", 1)
+
     match input_path.suffix, output_path.suffix:
         case ".png", ".mkv":
             pack_video(
                 input_path,
                 output_path,
+                frame_start=frame_start,
+                frame_step=frame_step,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
                 tmp_folder=tmp_folder,
@@ -158,6 +163,8 @@ def _process_video(
             pack_video(
                 tmp_template,
                 output_path,
+                frame_start=frame_start,
+                frame_step=frame_step,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
                 tmp_folder=tmp_folder,
@@ -189,6 +196,8 @@ def _process_video(
             unpack_video(
                 input_path,
                 tmp_frames,
+                frame_start=frame_start,
+                frame_step=frame_step,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
                 tmp_folder=tmp_folder,

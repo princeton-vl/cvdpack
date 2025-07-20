@@ -36,13 +36,16 @@ PROPS_TO_ENCODER_PIXFMT = {
 FFMPEG = os.environ.get(ENVIRON_KEYS["ffmpeg"], "ffmpeg")
 FFMPEG_ARGS = [FFMPEG, "-nostdin", "-y", "-hide_banner"]
 
-def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False):
+def _template_name_to_ffmpeg_format(
+    filename: str,
+    as_glob: bool = False,
+) -> str:
 
     """
     Best not to use this function in the general case, because paths like flow force us to use -pattern_type glob, which the ignores -start_number
     """
 
-    if "{frame}" in str(input_path):
+    if "{frame}" in filename:
         # note RE this warning - we could potentially map {frame} to %04d for ffmpeg, but:
         # (1) it is hard to guess the num digits and
         # (2) this is difficult for cases like TartanAir flow where paths contain both {frame:06d} and {framenext:06d}
@@ -54,40 +57,58 @@ def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False)
     newname = re.sub(
         r"\{frame:(0\d+)d\}",  # DONT match {framenext:06d} here because we will explictly fix this later
         lambda m: "*" if as_glob else f"%{m.group(1)}d",
-        input_path.name,
+        filename,
     )
 
     logger.debug(
-        f"{_curlyframe_to_ffmpeg_frametemplate.__name__} {input_path.name=} -> {newname=}"
+        f"{_template_name_to_ffmpeg_format.__name__} {filename=} -> {newname=}"
     )
 
-    return str(input_path.parent / newname)
+    return newname
+
 def unpack_video(
     input_video_path: Path,
     output_frames_path_template: Path,
     tmp_folder: Path,
+    frame_start: int = 0,
+    frame_step: int = 1,
     ffmpeg: str = "ffmpeg",
     n_cpus: int | None = None,
     loglevel: int | None = None,
 ):
+    
+    """
+    If the output mapping is one that can be handled by ffmpeg we write directly to output_frames_path_template
+
+    If it cant be handled (e.g. frame_step != 1 or complex features like {framenext}) we write to a temporary folder and then rename the files to the correct paths.
+    """
+
     logger.info(
         f"{unpack_video.__name__} {input_video_path=} to {output_frames_path_template=}"
     )
     output_frames_path_template.parent.mkdir(parents=True, exist_ok=True)
 
-    output_path_ffmpeg = _curlyframe_to_ffmpeg_frametemplate(
-        output_frames_path_template
+    do_redirect = (
+        "framenext" in str(output_frames_path_template)
+        or frame_step != 1
     )
 
-    ffmpeg_args = [ffmpeg, "-nostdin","-y", "-hide_banner"]
+    output_filename = _template_name_to_ffmpeg_format(output_frames_path_template.name)
+    ext = output_frames_path_template.suffix
+    if do_redirect:
+        tmp_folder.mkdir(parents=True, exist_ok=True)
+        output_path = tmp_folder / f"%08d.{ext}"
+    else:
+        output_path = output_frames_path_template.parent / output_filename
+
+    ffmpeg_args = FFMPEG_ARGS.copy()
+    ffmpeg_args += ["-start_number", str(frame_start)]
 
     if loglevel != logging.DEBUG:
-        ffmpeg_args.extend(["-loglevel", "error"])
-
+        ffmpeg_args += ["-loglevel", "error"]
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
-
-    ffmpeg_args.extend(["-i", str(input_video_path), output_path_ffmpeg])
+    ffmpeg_args.extend(["-i", str(input_video_path), output_path])
 
     command = " ".join(ffmpeg_args)
     logger.info(
@@ -97,13 +118,15 @@ def unpack_video(
 
     # to my knowledge, ffmpeg cannot output framenum AND framenum+1 in the output path template,
     # so, we have to go back through and rename all the files to resolve {framenext:...} to frame+1
-    if "{framenext" in output_path_ffmpeg:
-        targets = list(
-            match_template_paths(output_frames_path_template, allow_any=["framenext"])
-        )
-        for info, file in targets:
-            info["framenext"] = info["frame"] + 1
-            shutil.move(file, format_template(output_frames_path_template, info))
+    if do_redirect:
+        files = sorted(list(tmp_folder.iterdir()))
+        for i, file in enumerate(files):
+            assert file.name == f"{i:08d}.{ext}", (file, i)
+            frame = frame_start + i * frame_step
+            info = {"frame": frame, "framenext": frame + frame_step}
+            outpath = format_template(output_frames_path_template, info)
+            logger.debug(f"Renaming {file=} to {outpath=}")
+            shutil.move(file, outpath)
 
     return command
 
@@ -169,7 +192,7 @@ def pack_video(
         ])
     elif input_mode == "glob":
         raise NotImplementedError("Globbing input frames can cause incorrect frame numbers since it ignores -start_number")
-        ffmpeg_template = _curlyframe_to_ffmpeg_frametemplate(input_frames_path)
+        ffmpeg_template = _template_name_to_ffmpeg_format(input_frames_path)
         ffmpeg_args.extend([
             "-pattern_type", "glob", ffmpeg_template,
         ])
