@@ -204,7 +204,6 @@ class F32As2Int16ReinterpretPacker(Packer):
     def unpack(self, img_packed: np.ndarray):
         if img_packed.shape[2] == 3: # png saving will add an extra channel to fake that it is an RGB
             img_packed = img_packed[..., :2]
-        assert img_packed.shape[2] == 2, img_packed.shape
         assert img_packed.dtype == np.uint16
         img = img_packed.view(dtype=np.float32)
         return img
@@ -390,11 +389,18 @@ def unpack_frameset(
             f"{input_img_path=} had {img.dtype=}"
         )
 
-        if unpack_channels_last is not None:
-            assert img.ndim == 3, img.shape
-            img = img[:, :, :unpack_channels_last]
-
         img_unquant = packer.unpack(img)
+
+        match unpack_channels_last:
+            case x if x is not None:
+                assert img_unquant.ndim == 3, img_unquant.shape
+                img_unquant = img_unquant[:, :, :x]
+            case None if img_unquant.ndim == 3 and img_unquant.shape[2] == 1:
+                img_unquant = img_unquant [:, :, 0]
+            case None:
+                pass
+            case _:
+                raise ValueError(f"{unpack_channels_last=} is not valid")
 
         if "frame" in frame_info:
             frame_info["framenext"] = frame_info["frame"] + 1

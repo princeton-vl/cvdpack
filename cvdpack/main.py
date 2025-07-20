@@ -194,6 +194,7 @@ def _process_video(
                 input_path,
                 output_path,
                 packer=packer,
+                unpack_channels_last=job.config.get("unpack_channels_last", None),
             )
         case ".mkv", _:
             tmp_frames = tmp_folder / "{frame:06d}.png"
@@ -210,6 +211,7 @@ def _process_video(
                 tmp_frames,
                 output_path,
                 packer=packer,
+                unpack_channels_last=job.config.get("unpack_channels_last", None),
             )
         case ".tar.gz", _:
             unpack_tarball(input_path, output_path)

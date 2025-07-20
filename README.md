@@ -36,9 +36,7 @@ pip install cvdpack
 
 ### Getting Started:
  
-Cvdpack works for many dataset - see `--help` for all options and `--presets`, or use your own `--config myfile.json`
-
-Commands will print very little output unless using -v or -d. 
+Add `-v` or `-d` to see more output. See `uvx cvdpack --help` for all options. 
 
 ##### Pack/unpack one scene of tartanair locally with minimal image/gt changes
 Commands shown are for a single scene and video, remove --subset to do the full thing
@@ -190,19 +188,12 @@ Note: you can also run these with concrete single image paths and not use --subs
 
 ##### Integration test:
 
-We will always make sure this sequence of commands runs without error:
+We will always make sure that pack and unpack works for TartanAir and has no filechanges:
 
 ```bash
-
-rm -rf data/tmp*/
-
-/usr/bin/time -o data/pack_lossless_time.txt uv run cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed_lossless/ --config presets/tartanair_floatingpoint.json --tmp_folder data/tmp2/ --n_workers 10 --subset scene=abandonedfactory vid=P000
-CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 /usr/bin/time -o data/pack_lossy_time.txt uv run cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed_lossy/ --config presets/tartanair_quantized.json --tmp_folder data/tmp3/ --n_workers 10 --subset scene=abandonedfactory vid=P000
-/usr/bin/time -o data/unpack_lossless_time.txt uv run cvdpack unpack --input data/TartanAir_packed_lossless --output data/TartanAir_unpacked_lossless --n_workers 10 --tmp_folder data/tmp1/ --subset scene=abandonedfactory vid=P000
-/usr/bin/time -o data/unpack_lossy_time.txt uv run cvdpack unpack --input data/TartanAir_packed_lossy --output data/TartanAir_unpacked_lossy --n_workers 10 --tmp_folder data/tmp1/ --subset scene=abandonedfactory vid=P000
-
-
+bash integration_test.sh
 ```
+
 
 ##### TODOs
 

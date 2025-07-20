@@ -27,10 +27,11 @@
         "flow": {
             "original_path_template": "{scene}/{split}/{vid}/{gt_type}/{frame:06d}_{framenext:06d}_{gt_type}.npy",
             "packed_path_template": "{scene}/{split}/{vid}/{gt_type}.mkv",
+            "unpack_channels_last": 2,
             "packing": {
                 "method": "LINEAR",
-                "min_orig_val": -200,
-                "max_orig_val": 200,
+                "min_orig_val": -300,
+                "max_orig_val": 300,
                 "from_dtype": "float32",
                 "to_dtype": "uint16",
                 "out_of_bounds_method": "nan_warn"
