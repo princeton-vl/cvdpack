@@ -40,14 +40,6 @@ Follow ffmpeg instructions as shown above, and create your own conda environmnen
 pip install cvdpack
 ```
 
-##### Developer install
-
-```bash
-git clone https://github.com/princeton-vl/cvdpack.git
-cd cvdpack
-uv pip install -e .[dev]
-```
-
 ### Example Commands:
 
 Cvdpack works for many dataset - see `--help` for all options and `--presets`, or use your own `--config myfile.json`
@@ -101,7 +93,32 @@ Note: currently struggles to do the whole dataset for some dataset layouts e.g. 
 
 This tool depends heavily on the incredible contributions of https://ffmpeg.org/ and https://opencv.org/
 
-### TODO:
+### Contributing:
+
+Pull requests welcome!
+- No need to send PRs for typos or code style.
+- Please describe what you intended to achieve
+- show example commands of what it does, including timing and file sizes
+- if your command uses public datasets as a test, please link to the dataset. 
+
+Use github issues for feature requests or bugs. 
+
+Further development of this project might occur through community contributions, but is not a high priority for the main author(s). 
+
+##### Developer install
+
+```bash
+git clone https://github.com/princeton-vl/cvdpack.git
+cd cvdpack
+uv pip install -e .[dev]
+```
+
+##### Unit tests
+```bash
+uv run pytest tests/
+```
+
+##### TODOs
 
 Planned:
 - [ ] More presets/ .json files for common datasets
@@ -110,10 +127,10 @@ Planned:
 - [ ] Allow scp-style prefixes to input and/or output path, in which case we read/write from remotes in a streaming fashion
 
 No particular roadmap or intention to complete:
-- [ ] Provide a default dataloader which handles any uvx cvdpack.json
-    - [ ] Load from png version of the dataset
-    - [ ] Load from mkv version of the dataset ??
-- [ ] Use gpu accelerated video decoders?
+- [ ] Provide a default dataloader which handles any packed dataset w.r.t cvdpack.json
+    - [ ] Primary task: Dataload and unpack frames from a packed version of the dataset
+    - [ ] Dataload from mkv version of the dataset ??
+- [ ] Use gpu accelerated ffmpeg decoders for faster unpack at startup? are there any lossless ones?
 - [ ] Pack non-video framesets as compressed & chunked h5 (?) arrays
 - [ ] Store surface normals / unit sphere data as 2 angles, instead of 3 coords for 2dof. Use 2xuint16 quant or 2xfloat16 packing
 - [ ] Store stereo datasets efficiently by storing only left-frame info + sparse rightframe info
