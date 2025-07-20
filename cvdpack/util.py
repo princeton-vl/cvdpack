@@ -49,6 +49,43 @@ def save_any_image(
     assert path.exists(), f"Failed to save {path=}"
 
 
+def template_to_regex(template: Path, allow_any: list[str] | None = None):
+    fmt = Formatter()
+
+    found_keys = set()
+    parts = []
+    for lit, field, conv, _ in fmt.parse(template):
+        if "*" in lit:
+            lit_parts = lit.split("*")
+            for i, part in enumerate(lit_parts):
+                if i > 0:
+                    parts.append(r"[^/\\]*")
+                parts.append(re.escape(part))
+        else:
+            parts.append(re.escape(lit))
+
+        if not field:
+            continue
+        
+        if isinstance(conv, str) and conv.endswith("d") and field not in allow_any:
+            restrictor = r"\d+"
+        else:
+            restrictor = r"[^/\\]+"
+
+        if field in found_keys:
+            part = rf"{restrictor}"
+        else:
+            part = rf"(?P<{field}>{restrictor})"
+
+        parts.append(part)
+        found_keys.add(field)
+
+    regex = "^" + "".join(parts) + "$"
+    try:
+        return re.compile(regex)
+    except re.error as e:
+        raise ValueError(f"Invalid regex: {regex=}, {e=}") from e
+
 def match_template_paths(
     template: Path,
     match_video_folder: bool = False,
@@ -71,32 +108,7 @@ def match_template_paths(
             f"{child_template=} has base {search_folder=} which does not exist"
         )
 
-    fmt = Formatter()
-
-    parts = []
-    for lit, field, conv, _ in fmt.parse(child_template):
-        if "*" in lit:
-            lit_parts = lit.split("*")
-            for i, part in enumerate(lit_parts):
-                if i > 0:
-                    parts.append(r"[^/\\]*")
-                parts.append(re.escape(part))
-        else:
-            parts.append(re.escape(lit))
-
-        if not field:
-            continue
-
-        if isinstance(conv, str) and conv.endswith("d") and field not in allow_any:
-            parts.append(rf"(?P<{field}>\d+)")
-        else:
-            parts.append(rf"(?P<{field}>[^/\\]+)")
-
-    regex = "^" + "".join(parts) + "$"
-    try:
-        regex = re.compile(regex)
-    except re.error as e:
-        raise ValueError(f"Invalid regex: {regex=}, {e=}") from e
+    regex = template_to_regex(child_template, allow_any=allow_any)
 
     def match_to_dict(m: re.Match):
         return {k: int(v) if v.isdigit() else v for k, v in m.groupdict().items()}
@@ -183,3 +195,31 @@ def parse_dictlist_strings(argstrings: list[str] | None):
 
     logger.debug(f"{parse_dictlist_strings.__name__} mapped {argstrings=} -> {args=}")
     return args
+
+def included_in_filter(
+    file_keys: dict,
+    filter_vals: dict | None,
+    allow_extra: set[str] | None = None,
+) -> bool:
+    if filter_vals is None:
+        return False
+
+    first_keys = set(file_keys.keys())
+    extra = set(filter_vals.keys()) - first_keys
+    if allow_extra is not None:
+        extra -= allow_extra
+    if extra:
+        raise ValueError(
+            f"{filter_vals=} had keys {extra} which are not present in the input file template. "
+            f"Keys available to filter on are {first_keys}"
+        )
+
+    res = all(
+        (
+            k not in file_keys
+            or file_keys[k] == v
+            or (isinstance(v, (list, set)) and file_keys[k] in v)
+        )
+        for k, v in filter_vals.items()
+    )
+    return res

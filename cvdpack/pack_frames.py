@@ -190,6 +190,8 @@ class OneChannelF32As2Int16ReinterpretPacker(Packer):
         return img_quant
     
     def unpack(self, img_packed: np.ndarray):
+        if img_packed.shape[2] == 3: # png saving will add an extra channel to fake that it is an RGB
+            img_packed = img_packed[..., :2]
         assert img_packed.shape[2] == 2, img_packed.shape
         assert img_packed.dtype == np.uint16
         img = img_packed.view(dtype=np.float32)

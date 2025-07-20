@@ -5,14 +5,15 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import logging
 
-from .main import match_template_paths, format_template
+from . import util
 
 logger = logging.getLogger("cvdpack")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_template", type=Path)
-    parser.add_argument("output_template", type=Path)
+    parser.add_argument("--input", type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--subset", type=str, nargs="*", default=None)
     parser.add_argument("--vis", action="store_true")
     parser.add_argument(
         "-d",
@@ -21,7 +22,7 @@ def main():
         action="store_const",
         dest="loglevel",
         const=logging.DEBUG,
-        default=logging.WARNING,
+        default=logging.INFO,
     )
     parser.add_argument(
         "-v",
@@ -41,21 +42,30 @@ def main():
     )
     logger.setLevel(args.loglevel)
 
-    inps = list(match_template_paths(args.input_template))
+    subset = util.parse_dictlist_strings(args.subset)
+    inps = list(util.match_template_paths(args.input))
 
-    print(f"Checking {len(inps)} files")
+    logger.info(f"Checking {len(inps)} files")
+
+    if subset:
+        n_inps = len(inps)
+        inps = [
+            (info, before_path)
+            for info, before_path in inps
+            if util.included_in_filter(info, subset)
+        ]
+        n_filtered = len(inps) - n_inps
+        logger.info(f"Skipped {n_filtered} files due to {subset=}")
 
     for info, before_path in inps:
+
         before = np.load(before_path)
 
-        after_path = format_template(args.output_template, info)
+        after_path = util.format_template(args.output, info)
         if not after_path.exists():
             raise FileNotFoundError(f"Got {before_path=} but {after_path=} does not exist")
 
         after = np.load(after_path)
-
-        before = np.load(args.input_template)
-        after = np.load(args.output_template)
 
         if before.shape != after.shape:
             raise ValueError(f"Got {before.shape=} and {after.shape=} for {before_path=} and {after_path=}")

@@ -118,6 +118,32 @@ uv pip install -e .[dev]
 uv run pytest tests/
 ```
 
+##### Difference checker tool:
+
+Run tartanair pack and unpack, then choose one:
+
+```bash
+# all of TartanAir, except flow, that one uses a different template :/
+uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}.{ext} --output data/TartanAir_unpacked/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}_{gt_type}.{ext}
+
+# TartanAir, all depth
+uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}__{cam}.{ext} --output data/TartanAir_unpacked/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{frame:06d}_{gt_type}.{ext} --subset gt_type=depth
+
+# TartanAir, all flow images
+uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}__{cam}.{ext} --output data/TartanAir_unpacked/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{frame:06d}_{gt_type}.{ext} --subset gt_type=flow
+
+# TartanAir, single depth image
+uv run -m cvdpack.checkdiff --input data/TartanAir/abandonedfactory/Hard/P000/depth_left/000000_left_depth.npy --output data/TartanAir_unpacked/abandonedfactory/Hard/P000/depth_left/000000_left_depth.npy
+
+# TartanAir, single flow image
+uv run -m cvdpack.checkdiff --input data/TartanAir/abandonedfactory/Hard/P000/flow_left/000000_000001_flow.npy --output data/TartanAir_unpacked/abandonedfactory/Hard/P000/flow_left/000000_000001_flow.npy
+
+
+```
+
+Note: you can also run these with concrete single image paths and not use --subset
+
+
 ##### TODOs
 
 Planned:

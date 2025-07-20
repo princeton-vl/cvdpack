@@ -98,7 +98,7 @@ def find_jobs(
     skipped_for_lazy = 0
     jobs = []
     for vid_info, vid_input_path in paths:
-        if subset and not included_in_filter(
+        if subset and not util.included_in_filter(
             vid_info, subset, allow_extra=matched_keys
         ):
             continue
@@ -679,35 +679,6 @@ def parse_args():
     return validate_args(parser.parse_args())
 
 
-def included_in_filter(
-    file_keys: dict,
-    filter_vals: dict | None,
-    allow_extra: set[str] | None = None,
-) -> bool:
-    if filter_vals is None:
-        return False
-
-    first_keys = set(file_keys.keys())
-    extra = set(filter_vals.keys()) - first_keys
-    if allow_extra is not None:
-        extra -= allow_extra
-    if extra:
-        raise ValueError(
-            f"{filter_vals=} had keys {extra} which are not present in the input file template. "
-            f"Keys available to filter on are {first_keys}"
-        )
-
-    res = all(
-        (
-            k not in file_keys
-            or file_keys[k] == v
-            or (isinstance(v, (list, set)) and file_keys[k] in v)
-        )
-        for k, v in filter_vals.items()
-    )
-    return res
-
-
 def copy_files(
     input_template: Path,
     output_template: Path,
@@ -739,7 +710,7 @@ def copy_files(
     input_files = [
         (tvals, path)
         for tvals, path in util.match_template_paths(input_template)
-        if included_in_filter(tvals, subset)
+        if util.included_in_filter(tvals, subset)
     ]
 
     if len(input_files) == 0:
