@@ -251,14 +251,11 @@ class CheckBoundsPacker(Packer):
         return img_packed.astype(self.from_dtype)
     
 def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
-    
-    if packing_config is None:
-        return None
 
     min_orig_val = packing_config.get("min_orig_val", None)
     max_orig_val = packing_config.get("max_orig_val", None)
-    to_dtype = DTYPE_MAP[packing_config.get("to_dtype", None)]
-    from_dtype = DTYPE_MAP[packing_config.get("from_dtype", None)]
+    to_dtype = DTYPE_MAP[packing_config["to_dtype"]] if "to_dtype" in packing_config else None
+    from_dtype = DTYPE_MAP[packing_config["from_dtype"]] if "from_dtype" in packing_config else None
     out_of_bounds_method = packing_config.get("out_of_bounds_method", "nan_warn")
 
     match PackMethod.from_str(packing_config["method"]):
@@ -333,7 +330,7 @@ def pack_frameset(
                 f"Error packing {frame_input_path=} to {output_path=}: {e}"
             ) from e
 
-        if img.ndim == 3 and img.shape[2] == 2:
+        if img_quant.ndim == 3 and img_quant.shape[2] == 2:
             # last dim 1 or 3 is fine, but 2 needs padding to 3 because 2-channel pngs are not a thing (?)
             img_quant = np.pad(img_quant, ((0, 0), (0, 0), (0, 1)), mode="constant")
             assert img_quant.shape[2] == 3, f"{img_quant.shape=}"
