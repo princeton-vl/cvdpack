@@ -105,6 +105,8 @@ cd cvdpack
 uv pip install -e .[dev]
 ```
 
+You should then run all the example commands via `uv run` instead of `uvx`
+
 ##### Unit tests
 ```bash
 uv run pytest tests/

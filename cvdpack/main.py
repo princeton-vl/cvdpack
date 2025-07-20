@@ -135,20 +135,21 @@ def _process_video(
     input_path: Path,
     output_path: Path,
     job: Job,
-    make_tmp_folder: Callable,
+    tmp_folder: Path,
 ):
     packer = pack_frames.get_channel_packer(job.config.get("packing"))
 
     match input_path.suffix, output_path.suffix:
         case ".png", ".mkv":
-            command = pack_video(
+            pack_video(
                 input_path,
                 output_path,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
+                tmp_folder=tmp_folder,
             )
         case _, ".mkv":
-            tmp_template = make_tmp_folder() / "{frame:06d}.png"
+            tmp_template = tmp_folder / "{frame:06d}.png"
             pack_frames.pack_frameset(
                 input_path,
                 tmp_template,
@@ -159,6 +160,7 @@ def _process_video(
                 output_path,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
+                tmp_folder=tmp_folder,
             )
         case _, ".tar.gz":
             pack_tarball(input_path, output_path)
@@ -168,6 +170,7 @@ def _process_video(
                 output_path,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
+                tmp_folder=tmp_folder,
             )
         case ".png" | ".jpg" | ".jpeg" | ".npy", ".png":
             pack_frames.pack_frameset(
@@ -182,12 +185,13 @@ def _process_video(
                 packer=packer,
             )
         case ".mkv", _:
-            tmp_frames = make_tmp_folder() / "{frame:06d}.png"
+            tmp_frames = tmp_folder / "{frame:06d}.png"
             unpack_video(
                 input_path,
                 tmp_frames,
                 n_cpus=job.cpus_per_worker,
                 loglevel=job.loglevel,
+                tmp_folder=tmp_folder,
             )
             pack_frames.unpack_frameset(
                 tmp_frames,
@@ -216,41 +220,36 @@ def process_video_job(job: Job):
     input_path = job.input_path
     output_path = job.output_path
 
-    tmp_path = None
 
-    # we create the tmp_folder conditionally, so that we only throw for tmp_folder None if the job actually needed a tmp_folder
-    def make_tmp_folder():
-        tmp_folder = job.tmp_folder
-        out_str = str(output_path)
-        out_str = (
-            out_str.replace("{", "")
-            .replace("}", "")
-            .replace(":", "")
-            .replace("_", "-")
-            .replace("/", "_")
-        )
+    tmp_root = job.tmp_folder
+    out_str = str(output_path)
+    out_str = (
+        out_str.replace("{", "")
+        .replace("}", "")
+        .replace(":", "")
+        .replace("_", "-")
+        .replace("/", "_")
+    )
 
-        nonlocal tmp_path
-        tmp_path = tmp_folder / out_str
+    tmp_path = tmp_root / out_str
 
-        logger.debug(
-            f"Making {tmp_path=} for {input_path=} -> {output_path=}, {tmp_path.exists()=}"
-        )
-
-        tmp_path.mkdir(parents=True, exist_ok=False)
-        return tmp_path
+    logger.debug(
+        f"Making {tmp_path=} for {input_path=} -> {output_path=}, {tmp_path.exists()=}"
+    )
+    tmp_path.mkdir(parents=True, exist_ok=False)
 
     try:
         _process_video(
             input_path,
             output_path,
             job,
-            make_tmp_folder,
+            tmp_path,
         )
         print(input_path, output_path)
     finally:
-        if tmp_path is not None:
-            shutil.rmtree(tmp_path)
+        pass
+        #if tmp_path is not None:
+        #    shutil.rmtree(tmp_path)
 
 
 def wait_jobs(launched_jobs, pbar):
@@ -579,6 +578,11 @@ def validate_args(args: argparse.Namespace):
             f"This is because many clusters often limit arrays to 1000 jobs, but the job array e.g. for tartanair is 3000+. "
             f"Set {util.ENVIRON_KEYS['array_max']} to a larger value if this is appropriate forr your cluster"
         )
+
+    if args.tmp_folder is not None and args.tmp_folder.exists():
+        raise FileExistsError(f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder")
+    if not args.tmp_folder.parent.exists():
+        raise FileNotFoundError(f"Parent folder {args.tmp_folder.parent=} does not exist, please create it or use a different --tmp_folder")
 
     return args
 

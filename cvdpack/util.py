@@ -29,7 +29,6 @@ def load_any_image(path: Path, allow_pickle: bool = False):
         case _:
             raise ValueError(f"Unhandled {path.suffix=} for {path=}")
 
-
 def save_any_image(
     img: np.ndarray,
     path: Path,

@@ -37,6 +37,11 @@ FFMPEG = os.environ.get(ENVIRON_KEYS["ffmpeg"], "ffmpeg")
 FFMPEG_ARGS = [FFMPEG, "-nostdin", "-y", "-hide_banner"]
 
 def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False):
+
+    """
+    Best not to use this function in the general case, because paths like flow force us to use -pattern_type glob, which the ignores -start_number
+    """
+
     if "{frame}" in str(input_path):
         # note RE this warning - we could potentially map {frame} to %04d for ffmpeg, but:
         # (1) it is hard to guess the num digits and
@@ -57,11 +62,10 @@ def _curlyframe_to_ffmpeg_frametemplate(input_path: Path, as_glob: bool = False)
     )
 
     return str(input_path.parent / newname)
-
-
 def unpack_video(
     input_video_path: Path,
     output_frames_path_template: Path,
+    tmp_folder: Path,
     ffmpeg: str = "ffmpeg",
     n_cpus: int | None = None,
     loglevel: int | None = None,
@@ -107,54 +111,71 @@ def unpack_video(
 def pack_video(
     input_frames_path: Path,
     output_video_path: Path,
+    tmp_folder: Path,
+    frame_start: int = 0,
+    frame_step: int = 1,
     ffmpeg: str = "ffmpeg",
     n_cpus: int | None = None,
     loglevel: int | None = None,
 ):
+        
     logger.info(f"{pack_video.__name__} {input_frames_path=} to {output_video_path=}")
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    matched = next(match_template_paths(input_frames_path), None)
-    if matched is None:
-        raise ValueError(f"No frames found in {input_frames_path=}")
-    first = load_any_image(matched[1])
-    start_number = matched[0]["frame"]
-    assert first is not None, f"Failed to load {matched[1]=}"
+    matched = list(match_template_paths(input_frames_path))
+    matched = sorted(matched, key=lambda x: x[0]["frame"])
 
+    first = load_any_image(matched[0][1])
     dim = first.shape[-1] if first.ndim == 3 else 1
     encoder, pix_fmt = PROPS_TO_ENCODER_PIXFMT[(str(first.dtype), dim)]
     encoder_args = ENCODER_ARGS[encoder]
 
-    input_frames_ffmpeg = _curlyframe_to_ffmpeg_frametemplate(
-        input_frames_path, as_glob=True
-    )
-
-    if start_number != 0:
-        raise ValueError(
-            f"Expected start_number to be 0, got {start_number=} due to first matched frame {matched[1]=} "
-            "Videos which start at non-zero frame numbers are not yet supported, but possibly could be. "
-            "If your video _should_ be starting at zero but you see this error, contact the developers."
-        )
     ffmpeg_args = FFMPEG_ARGS.copy()
-
     if loglevel != logging.DEBUG:
         ffmpeg_args.extend(["-loglevel", "error"])
         if encoder == "libx265":
-            encoder_args += " -x265-params log-level=quiet"
-
+            encoder_args = encoder_args + " -x265-params log-level=quiet"
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
 
-    ffmpeg_args.extend(
-        [
-            "-start_number",
-            str(start_number),
-            "-pattern_type",
-            "glob",
-            "-i",
-            input_frames_ffmpeg,
-        ]
-    )
+    # doesnt seem to be recognized for pack?
+    #ffmpeg_args.extend(
+    #    [
+    #        "-start_number",
+    #        str(frame_start),
+    #    ]
+    #)
+    
+    # These errors are necessary so that we are sure we will unpack to the correct paths on the other end
+    # IE we rely wholly on frame_start and frame_step to name the files when unpacking, so they better explain the current filenames correctly.
+    for i, (info, path) in enumerate(matched):
+        if info["frame"] != frame_start + i * frame_step:
+            raise ValueError(
+                f"{input_frames_path} had frame {info['frame']} for {i=} {path=}"
+                f"but {frame_start=} {frame_step=} means we expected {frame_start + i * frame_step=}"
+            )
+
+    input_mode = "txt"
+    if input_mode == "txt":
+        tmp_folder.mkdir(parents=True, exist_ok=True)
+        input_txt_path = tmp_folder / "input.txt"
+        assert not input_txt_path.exists(), f"{input_txt_path=} already exists"
+        with input_txt_path.open("w") as f:
+            for info, path in matched:
+                f.write(f"file '{str(path.absolute())}'\n")
+        assert input_txt_path.exists(), f"Failed to create {input_txt_path=}"
+        ffmpeg_args.extend([
+            "-f", "concat", "-safe", "0", "-i", str(input_txt_path.absolute()),
+        ])
+    elif input_mode == "glob":
+        raise NotImplementedError("Globbing input frames can cause incorrect frame numbers since it ignores -start_number")
+        ffmpeg_template = _curlyframe_to_ffmpeg_frametemplate(input_frames_path)
+        ffmpeg_args.extend([
+            "-pattern_type", "glob", ffmpeg_template,
+        ])
+    else:
+        raise ValueError(f"Unknown input_mode {input_mode=}")
+
     ffmpeg_args.extend(encoder_args.split())
     ffmpeg_args.extend(["-pix_fmt", pix_fmt, "-an", str(output_video_path)])
 
