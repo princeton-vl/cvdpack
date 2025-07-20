@@ -584,7 +584,15 @@ def validate_args(args: argparse.Namespace):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+
+    parser = argparse.ArgumentParser(
+        description=f"""
+        Cvdpack is a tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos.
+
+        Note: you can customize some features by overriding environment variables:
+          {list(util.ENVIRON_KEYS.values())}
+        """,
+    )
     parser.add_argument(
         "action",
         type=str,
