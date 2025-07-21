@@ -26,7 +26,12 @@ from tqdm import tqdm
 from cvdpack import __version__, compatibility_version
 from cvdpack import util
 from cvdpack import pack_frames
-from cvdpack.pack_timeseries import pack_video, unpack_video, pack_tarball, unpack_tarball
+from cvdpack.pack_timeseries import (
+    pack_video,
+    unpack_video,
+    pack_tarball,
+    unpack_tarball,
+)
 
 try:
     import submitit
@@ -36,6 +41,7 @@ except ImportError:
 logger = logging.getLogger("cvdpack")
 
 SLURM_ARRAY_MAX = int(os.environ.get(util.ENVIRON_KEYS["array_max"], 500))
+
 
 class GtType(Enum):
     RGB = "rgb"
@@ -235,7 +241,6 @@ def process_video_job(job: Job):
     input_path = job.input_path
     output_path = job.output_path
 
-
     tmp_root = job.tmp_folder
     out_str = str(output_path)
     out_str = (
@@ -263,7 +268,7 @@ def process_video_job(job: Job):
         print(input_path, output_path)
     finally:
         pass
-        #if tmp_path is not None:
+        # if tmp_path is not None:
         #    shutil.rmtree(tmp_path)
 
 
@@ -595,15 +600,16 @@ def validate_args(args: argparse.Namespace):
         )
 
     if args.tmp_folder is not None and args.tmp_folder.exists():
-        raise FileExistsError(f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder")
-    if not args.tmp_folder.parent.exists():
-        raise FileNotFoundError(f"Parent folder {args.tmp_folder.parent=} does not exist, please create it or use a different --tmp_folder")
+        raise FileExistsError(
+            f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder"
+        )
+
+    # not safe to check if args.tmp_folder exists, we may be running on the headnode wheras /scratch might only exist once inside a slurm job
 
     return args
 
 
 def parse_args():
-
     parser = argparse.ArgumentParser(
         description=f"""
         Cvdpack is a tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos.
@@ -798,7 +804,7 @@ def main():
             "This may mean that the config is not compatible with the installed cvdpack, or that the config is outdated"
             "Please install that version of cvdpack, or use --no-verify-version if you have verified it is safe to skip this check"
         )
-    
+
     if (
         config_version is not None
         and not args.no_verify_version
@@ -809,7 +815,6 @@ def main():
             f"This should be safe since {compatibility_version=} matched correctly, but there is a minute chance the compatibility version could be misconfigured"
         )
 
-        
     subset = util.parse_dictlist_strings(args.subset)
     dataset_jobprocess_kwargs = dict(
         steps=args.steps,

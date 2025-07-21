@@ -88,7 +88,7 @@ All commands will assume packing via multiprocessing, but we recommend using a s
 ##### Pack/unpack TartanAir with zero intended image/gt changes
 
 ```bash
-screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floating.json --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floatingpoint.json --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 
 screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
@@ -122,12 +122,12 @@ These commands allow massively parallel packing/unpacking on a SLURM cluster. Th
 
 ```bash
 #lossless encode
-CVDPACK_MINOR_VIDEO_ERROR_CODECS=0 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floating.json --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+CVDPACK_MINOR_VIDEO_ERROR_CODECS=0 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floatingpoint.json --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs -v
 
 #lossy encode
-CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_quantized.json --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_quantized.json --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs -v
 
-screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs
 ```
 
 ### Acknowledgement
