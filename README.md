@@ -1,10 +1,10 @@
-# Computer Vision Data Packer (uvx cvdpack)
+# Computer Vision Data Packer (cvdpack)
 
 A tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos. 
 
 Reduce your dataset size by up to 80+%, with minimal changes in groundtruth accuracy!
 
-:warning: Make a backup of your data, and doublecheck your experimental results are not changed by uvx cvdpack :warning:
+:warning: Make a backup of your data, and doublecheck your experimental results are not changed by cvdpack :warning:
 
 Currently, this tool has been minimally tested to work with the following dataset(s):
 - TartanAir
