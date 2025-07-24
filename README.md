@@ -2,7 +2,7 @@
 
 A tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos. 
 
-Reduce your dataset size by up to 80+%, with minimal changes in groundtruth accuracy!
+Reduce your dataset storage cost by 50-95% using lossless or quantized+lossless compression.
 
 :warning: Make a backup of your data, and doublecheck your experimental results are not changed by cvdpack :warning:
 
@@ -24,7 +24,7 @@ brew install ffmpeg
 
 Then, install uv: [instructions](https://docs.astral.sh/uv/getting-started/installation/)
 
-You can now run `uvx cvdpack` as shown below. You do not need to manually install the tool to use the cli. 
+You can now run `uvx cvdpack` as shown below. You do not need to manually install the tool if you use `uvx`. 
 
 ##### Optional: install cvdpack package
 
@@ -38,37 +38,36 @@ pip install cvdpack
  
 Add `-v` or `-d` to see more output. See `uvx cvdpack --help` for all options. 
 
-##### Pack/unpack one scene of tartanair locally with minimal image/gt changes
-Commands shown are for a single scene and video, remove --subset to do the full thing
-```bash
-uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_floatingpoint.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
-uvx cvdpack unpack --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 10 --tmp_folder data/tmp/ --subset scene=abandonedfactory vid=P000 -v
-```
-Runtime for one scene is approx 93sec to pack and TODO to unpack on an AMD EPYC 7713P.
-Filesizes are approx 8.6GB for the raw abandonedfactory/Hard/P000 scene, 2.6G for the packed version (70% savings)
-
-##### Pack/unpack one scene of tartanair locally with quantization and small RGB changes
+##### Pack/unpack one scene of tartanair locally with quantization, h265 encoding, and small RGB changes
 
 ```bash
 CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_quantized.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
 uvx cvdpack unpack --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 10 --tmp_folder data/tmp/ --subset scene=abandonedfactory vid=P000 -v
 ```
-Runtime for one scene is approx 54sec and TODO respectively on an AMD EPYC 7713P.
+Runtime for one scene is approx 54sec and 46sec respectively with 10 workers on an AMD EPYC 7713P.
 Filesizes are approx 8.6GB for raw TartanAir vs 1.3GB for packed version (84% savings)
 
-Should achieve significantly better compression, especially for large amounts of RGB data. Ground truth (currently) still uses ffv1 due to its support for uint16, so do not expect improvements except for 3 channel uint8 data. 
-
-Unpacking uses the same command as above, but all your users will be required to install libx265-dev, which may (?) require a paid license for users in industry, therefore limiting the reach of your data.  
-
-Known compromises:
-- CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 allows libx265 with yuv444p pixels - will mean small fraction of pixel values change by +=1 or +=2.
-- libx265 (should) have significantly slower encoding speed, but faster overall decoding speed. 
+This config has the best compression but has SIGNIFICANT COMPROMISES on quality:
 - presets/tartanair_quantized.json will clip ground truth to certain min/max values, which will appear as nan when unpacked
 - presets/tartanair_quantized.json will store intermediate data as uint16. This means flow has ~0.01px precision, depth has variable precision (very large error at 500m+)
+- CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 allows libx265 with yuv444p pixels - will mean small fraction of pixel values change by +=1 or +=2.
+- Industry users may require a license for libx265 to unpack the data
+- libx265 is (supposedly) slow to encode (albeit faster to decode)
 
 Many tradeoffs are adjustable via the json config file:
 - Choose between dynamic range and precision by adjusting the min/max quantize values
 - Choose which channels are quantized vs float16 vs float32 (they dont all have to be the same)
+
+##### WIP: Pack/unpack one scene of tartanair locally with minimal image/gt changes
+Commands shown are for a single scene and video, remove --subset to do the full thing
+```bash
+uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_floatingpoint.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
+uvx cvdpack unpack --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 10 --tmp_folder data/tmp/ --subset scene=abandonedfactory vid=P000 -v
+```
+Runtime for one scene is approx 93sec to pack and 36sec to unpack on an AMD EPYC 7713P.
+Filesizes are approx 8.6GB for the raw abandonedfactory/Hard/P000 scene, 4.5G for the packed version (48% savings).
+
+This setting should be considered WIP. It is not particularly space-efficient and I am not positive that video compression adds any additional benefit over storing PNGs. It is possible the float-to-int16 strategy can be significantly improved. Currently we reinterpret cast floating point data into uint16 video, which produces nasty stripey patterns that do not compress well. TODO find a better strategy for compressing float32 data.
 
 ##### Reorganize a dataset
 ```bash
@@ -197,7 +196,8 @@ bash integration_test.sh
 
 ##### TODOs
 
-Planned:
+Tentatively planned:
+- [ ] Find a better way to losslessly pack float32 into a video container. 
 - [ ] More presets/ .json files for common datasets
 - [ ] Add support for sintel/flyingthings .flo .disp .pfm etc
 - [ ] Allow pack resolution or res multiplier to be specified in config, enforce this during pack / unpack
