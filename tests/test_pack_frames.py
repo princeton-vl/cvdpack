@@ -4,7 +4,7 @@ from cvdpack.pack_frames import (
     LinearQuantizeIntPacker,
     InvQuantizeInt16Packer,
     CheckBoundsPacker,
-    OneChannelF32As2Int16ReinterpretPacker,
+    F32As2Int16ReinterpretPacker,
     F16ToInt16ReinterpretPacker,
 )
 
@@ -53,9 +53,8 @@ def test_onechannel_f32_as_2int16_pack_method():
     np.random.seed(42)
     min_val, max_val = -100.0, 100.0
     data = np.random.uniform(min_val, max_val, (32, 32)).astype(np.float32)
-    to_dtype = np.uint16
 
-    packer = OneChannelF32As2Int16ReinterpretPacker(scalar=1.0)
+    packer = F32As2Int16ReinterpretPacker(scalar=1.0)
     packed = packer.pack(data)
     unpacked = packer.unpack(packed).squeeze(-1)
 
@@ -65,8 +64,7 @@ def test_onechannel_f32_as_2int16_pack_method():
 def test_multichannel_to_f16_as_int16_pack_method():
     np.random.seed(42)
     data = np.random.uniform(-1000, 1000, (32, 32, 3)).astype(np.float32)
-    min_val, max_val = 0.0, 1.0
-    to_dtype = np.uint16
+    _min_val, _max_val = 0.0, 1.0
 
     packer = F16ToInt16ReinterpretPacker(scalar=1.0)
     packed = packer.pack(data)

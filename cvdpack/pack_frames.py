@@ -18,6 +18,7 @@ DTYPE_MAP = {
     "float64": np.float64,
 }
 
+
 class PackMethod(Enum):
     LINEAR = "linear"
     INV = "inv"
@@ -28,6 +29,7 @@ class PackMethod(Enum):
     @classmethod
     def from_str(cls, s: str):
         return cls(s.lower())
+
 
 def _mask_to_nan_or_error(
     img: np.ndarray,
@@ -43,6 +45,7 @@ def _mask_to_nan_or_error(
             logger.warning(msg + ", will be interpreted as nan")
         case "error":
             raise ValueError(msg)
+
 
 def _oob_to_nan_or_error(
     img: np.ndarray,
@@ -79,6 +82,7 @@ def _pack_to_int_with_nan_to_imax(
     img_quant[~isnan] = (img_norm[~isnan] * (intmax - 1)).astype(to_dtype)
     return img_quant
 
+
 def _unpack_from_int_with_imax_to_nan(
     img_quant: np.ndarray,
     from_dtype: np.dtype,
@@ -89,23 +93,23 @@ def _unpack_from_int_with_imax_to_nan(
     img_norm[img_quant == imax] = np.nan
     return img_norm
 
+
 class Packer:
-    
     def pack(self, img: np.ndarray):
         raise NotImplementedError("Subclass must implement pack")
-    
+
     def unpack(self, img_packed: np.ndarray):
         raise NotImplementedError("Subclass must implement unpack")
 
-class LinearQuantizeIntPacker(Packer):
 
+class LinearQuantizeIntPacker(Packer):
     """
     We use uint8/uint16 since pngs/mkvs support them
     """
 
     def __init__(
-        self, 
-        min_orig_val: float, 
+        self,
+        min_orig_val: float,
         max_orig_val: float,
         from_dtype: np.dtype,
         to_dtype: np.dtype,
@@ -119,31 +123,35 @@ class LinearQuantizeIntPacker(Packer):
 
         assert to_dtype in [np.uint8, np.uint16], f"{to_dtype=}"
 
-
     def pack(self, img: np.ndarray):
         img = _oob_to_nan_or_error(
-            img, self.min_orig_val, self.max_orig_val, self.out_of_bounds_method,
+            img,
+            self.min_orig_val,
+            self.max_orig_val,
+            self.out_of_bounds_method,
         )
         img_norm = (img - self.min_orig_val) / (self.max_orig_val - self.min_orig_val)
         return _pack_to_int_with_nan_to_imax(img_norm, self.to_dtype)
-    
+
     def unpack(self, img_packed: np.ndarray):
         img_norm = _unpack_from_int_with_imax_to_nan(img_packed, self.to_dtype)
-        img_orig = img_norm * (self.max_orig_val - self.min_orig_val) + self.min_orig_val
+        img_orig = (
+            img_norm * (self.max_orig_val - self.min_orig_val) + self.min_orig_val
+        )
         return img_orig.astype(self.from_dtype)
-    
-class InvQuantizeInt16Packer(Packer):
 
+
+class InvQuantizeInt16Packer(Packer):
     """
     Convert to uint8/uint16 but with nonlinear 1/x mapping, i.e. greater precision for small values
-    
+
     TODO: we may be able to generalize this for more mapping functions e.g. syssqrt / log?
         but we would need to be aware/handle how they flip the min/max or crash <0 etc
     """
 
     def __init__(
-        self, 
-        min_orig_val: float, 
+        self,
+        min_orig_val: float,
         max_orig_val: float,
         from_dtype: np.dtype,
         to_dtype: np.dtype,
@@ -153,8 +161,9 @@ class InvQuantizeInt16Packer(Packer):
         assert min_orig_val > 0, min_orig_val
 
         self.linear_packer = LinearQuantizeIntPacker(
-            min_orig_val=1/max_orig_val, # swapped min and max because of 1/x mapping!
-            max_orig_val=1/min_orig_val,
+            min_orig_val=1
+            / max_orig_val,  # swapped min and max because of 1/x mapping!
+            max_orig_val=1 / min_orig_val,
             from_dtype=from_dtype,
             to_dtype=to_dtype,
             out_of_bounds_method=out_of_bounds_method,
@@ -166,14 +175,14 @@ class InvQuantizeInt16Packer(Packer):
     def unpack(self, img_quant: np.ndarray):
         return 1 / self.linear_packer.unpack(img_quant)
 
-class F32As2Int16ReinterpretPacker(Packer):
 
+class F32As2Int16ReinterpretPacker(Packer):
     """
     Reinterprets one f32 channel into 2 uint16 image channels.
 
     Unfortunately the f32 exponent / mantissa do not neatly align with 16bits.
 
-    Currently we just ignore and hope the resulting images compress ok. 
+    Currently we just ignore and hope the resulting images compress ok.
 
     TODO: we could split into 3 uint16 channels with better alignment? does this matter?
     """
@@ -200,17 +209,18 @@ class F32As2Int16ReinterpretPacker(Packer):
         img_quant = img.view(np.uint16)
 
         return img_quant
-    
+
     def unpack(self, img_packed: np.ndarray):
-        if img_packed.shape[2] == 3: # png saving will add an extra channel to fake that it is an RGB
+        if (
+            img_packed.shape[2] == 3
+        ):  # png saving will add an extra channel to fake that it is an RGB
             img_packed = img_packed[..., :2]
         assert img_packed.dtype == np.uint16
         img = img_packed.view(dtype=np.float32)
         return img
-        
-    
-class F16ToInt16ReinterpretPacker(Packer):
 
+
+class F16ToInt16ReinterpretPacker(Packer):
     """
     Casts every f32 as f16, then reinterprets to uint16.
 
@@ -229,7 +239,6 @@ class F16ToInt16ReinterpretPacker(Packer):
         self.out_of_bounds_method = out_of_bounds_method
 
     def pack(self, img: np.ndarray):
-        
         mult = (img * self.scalar).astype(np.float16)
 
         # check for overflow - new inf values which were not present before multiply
@@ -239,10 +248,10 @@ class F16ToInt16ReinterpretPacker(Packer):
                 f"{self.__class__.__name__} had {newinf.astype(np.float32).mean()=}% "
                 f"this likely means that {self.scalar=} * {np.abs(img).max()=} is too large and caused overflow for float16"
             )
-            _mask_to_nan_or_error(mult, newinf, self.out_of_bounds_method,msg)
+            _mask_to_nan_or_error(mult, newinf, self.out_of_bounds_method, msg)
 
         return mult.view(dtype=np.uint16)  # reinterpret cast
-    
+
     def unpack(self, img_packed: np.ndarray):
         if img_packed.ndim == 2:
             img_packed = img_packed[..., np.newaxis]
@@ -251,8 +260,8 @@ class F16ToInt16ReinterpretPacker(Packer):
         img = img_packed.view(dtype=np.float16)  # reinterpret cast
         return img
 
+
 class CheckBoundsPacker(Packer):
-    
     def __init__(
         self,
         min_orig_val: float,
@@ -264,25 +273,36 @@ class CheckBoundsPacker(Packer):
         self.max_orig_val = max_orig_val
         self.to_dtype = to_dtype
         self.from_dtype = from_dtype
-    
+
     def pack(self, img: np.ndarray):
         assert img.dtype == self.from_dtype, f"{img.dtype=}, {self.from_dtype=}"
         img = _oob_to_nan_or_error(
-            img, self.min_orig_val, self.max_orig_val, 'error',
+            img,
+            self.min_orig_val,
+            self.max_orig_val,
+            "error",
         )
         img_quant = img.astype(self.to_dtype)
         return img_quant
-    
-    def unpack(self, img_packed: np.ndarray):
-        assert img_packed.dtype == self.to_dtype, f"{img_packed.dtype=}, {self.to_dtype=}"
-        return img_packed.astype(self.from_dtype)
-    
-def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
 
+    def unpack(self, img_packed: np.ndarray):
+        assert img_packed.dtype == self.to_dtype, (
+            f"{img_packed.dtype=}, {self.to_dtype=}"
+        )
+        return img_packed.astype(self.from_dtype)
+
+
+def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
     min_orig_val = packing_config.get("min_orig_val", None)
     max_orig_val = packing_config.get("max_orig_val", None)
-    to_dtype = DTYPE_MAP[packing_config["to_dtype"]] if "to_dtype" in packing_config else None
-    from_dtype = DTYPE_MAP[packing_config["from_dtype"]] if "from_dtype" in packing_config else None
+    to_dtype = (
+        DTYPE_MAP[packing_config["to_dtype"]] if "to_dtype" in packing_config else None
+    )
+    from_dtype = (
+        DTYPE_MAP[packing_config["from_dtype"]]
+        if "from_dtype" in packing_config
+        else None
+    )
     out_of_bounds_method = packing_config.get("out_of_bounds_method")
 
     match PackMethod.from_str(packing_config["method"]):
@@ -321,7 +341,10 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
         case _:
             raise ValueError(f"Invalid {packing_config['method']=}")
 
-def get_all_channel_packers(channel_configs: dict[str, Any]) -> dict[str, Packer | None]:
+
+def get_all_channel_packers(
+    channel_configs: dict[str, Any],
+) -> dict[str, Packer | None]:
     return {
         channel_name: (
             get_channel_packer(conf)
@@ -396,7 +419,7 @@ def unpack_frameset(
                 assert img_unquant.ndim == 3, img_unquant.shape
                 img_unquant = img_unquant[:, :, :x]
             case None if img_unquant.ndim == 3 and img_unquant.shape[2] == 1:
-                img_unquant = img_unquant [:, :, 0]
+                img_unquant = img_unquant[:, :, 0]
             case None:
                 pass
             case _:

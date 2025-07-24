@@ -17,6 +17,7 @@ ENVIRON_KEYS = {
     "allow_lossy_rgb_encode": "CVDPACK_MINOR_VIDEO_ERROR",
 }
 
+
 def load_any_image(path: Path, allow_pickle: bool = False):
     match path.suffix:
         case ".png" | ".jpg" | ".jpeg":
@@ -29,6 +30,7 @@ def load_any_image(path: Path, allow_pickle: bool = False):
             return cv2.imread(str(path), cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
         case _:
             raise ValueError(f"Unhandled {path.suffix=} for {path=}")
+
 
 def save_any_image(
     img: np.ndarray,
@@ -69,7 +71,7 @@ def template_to_regex(template: Path, allow_any: list[str] | None = None):
 
         if not field:
             continue
-        
+
         if isinstance(conv, str) and conv.endswith("d") and field not in allow_any:
             restrictor = r"\d+"
         else:
@@ -88,6 +90,7 @@ def template_to_regex(template: Path, allow_any: list[str] | None = None):
         return re.compile(regex)
     except re.error as e:
         raise ValueError(f"Invalid regex: {regex=}, {e=}") from e
+
 
 def match_template_paths(
     template: Path,
@@ -176,11 +179,12 @@ def format_template(
     if isinstance(template, Path):
         res = Path(res)
 
-    #logger.debug(f"{format_template.__name__} {template=} -> {res=}, {matched=}")
+    # logger.debug(f"{format_template.__name__} {template=} -> {res=}, {matched=}")
 
     if return_matched:
         return res, matched
     return res
+
 
 def parse_dictlist_strings(argstrings: list[str] | None):
     if argstrings is None:
@@ -198,6 +202,7 @@ def parse_dictlist_strings(argstrings: list[str] | None):
 
     logger.debug(f"{parse_dictlist_strings.__name__} mapped {argstrings=} -> {args=}")
     return args
+
 
 def included_in_filter(
     file_keys: dict,

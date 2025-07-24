@@ -20,7 +20,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Literal
 
-import cv2
 import numpy as np
 from tqdm import tqdm
 
@@ -603,7 +602,9 @@ def validate_args(args: argparse.Namespace):
     if args.tmp_folder is not None:
         args.tmp_folder = args.tmp_folder / f"tmp_{random.randint(0, 10000)}"
         if args.tmp_folder.exists():
-            raise FileExistsError(f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder")
+            raise FileExistsError(
+                f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder"
+            )
 
     return args
 

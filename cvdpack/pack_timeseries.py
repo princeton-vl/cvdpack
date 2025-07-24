@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Literal
 
 from .util import (
-    match_template_paths, 
-    format_template, 
-    ENVIRON_KEYS, 
+    match_template_paths,
+    format_template,
+    ENVIRON_KEYS,
     load_any_image,
 )
 
@@ -27,29 +27,36 @@ ENCODER_ARGS = {
     ),
 }
 
-ALLOW_LOSSY_RGB_ENCODE = os.environ.get(
-    ENVIRON_KEYS["allow_lossy_rgb_encode"],
-    "0",
-) == "1"
+ALLOW_LOSSY_RGB_ENCODE = (
+    os.environ.get(
+        ENVIRON_KEYS["allow_lossy_rgb_encode"],
+        "0",
+    )
+    == "1"
+)
 
 PROPS_TO_ENCODER_PIXFMT = {
-    ("uint8", 1): ("ffv1", "gray"), # used for binary masks or <256 segmentation labels
-    ("uint8", 3): ("ffv1", "rgb24") if not ALLOW_LOSSY_RGB_ENCODE else ("libx265", "yuv444p"), # used for rgb video or sometimes normals
-    ("uint16", 1): ("ffv1", "gray16le"), # used for 1channel GT e.g. quantized depth
-
-    #NOTE: I investigated specifying endianness e.g. rgb48le rgb48be when packing floats, but it doesnt seem to matter. Neither does explicitly reversing the bits
-    ("uint16", 3): ("ffv1", "rgb48"), # used for multichannel GT e.g. quantized flow and for float32 packed as 2xuint16
-    ("uint16", 4): ("ffv1", "rgba64"), 
+    ("uint8", 1): ("ffv1", "gray"),  # used for binary masks or <256 segmentation labels
+    ("uint8", 3): ("ffv1", "rgb24")
+    if not ALLOW_LOSSY_RGB_ENCODE
+    else ("libx265", "yuv444p"),  # used for rgb video or sometimes normals
+    ("uint16", 1): ("ffv1", "gray16le"),  # used for 1channel GT e.g. quantized depth
+    # NOTE: I investigated specifying endianness e.g. rgb48le rgb48be when packing floats, but it doesnt seem to matter. Neither does explicitly reversing the bits
+    ("uint16", 3): (
+        "ffv1",
+        "rgb48",
+    ),  # used for multichannel GT e.g. quantized flow and for float32 packed as 2xuint16
+    ("uint16", 4): ("ffv1", "rgba64"),
 }
 
 FFMPEG = os.environ.get(ENVIRON_KEYS["ffmpeg"], "ffmpeg")
 FFMPEG_ARGS = [FFMPEG, "-nostdin", "-y", "-hide_banner"]
 
+
 def _template_name_to_ffmpeg_format(
     filename: str,
     as_glob: bool = False,
 ) -> str:
-
     """
     Best not to use this function in the general case, because paths like flow force us to use -pattern_type glob, which the ignores -start_number
     """
@@ -75,6 +82,7 @@ def _template_name_to_ffmpeg_format(
 
     return newname
 
+
 def unpack_video(
     input_video_path: Path,
     output_frames_path_template: Path,
@@ -85,7 +93,6 @@ def unpack_video(
     n_cpus: int | None = None,
     loglevel: int | None = None,
 ):
-    
     """
     If the output mapping is one that can be handled by ffmpeg we write directly to output_frames_path_template
 
@@ -97,10 +104,7 @@ def unpack_video(
     )
     output_frames_path_template.parent.mkdir(parents=True, exist_ok=True)
 
-    do_redirect = (
-        "framenext" in str(output_frames_path_template)
-        or frame_step != 1
-    )
+    do_redirect = "framenext" in str(output_frames_path_template) or frame_step != 1
 
     output_filename = _template_name_to_ffmpeg_format(output_frames_path_template.name)
     ext = output_frames_path_template.suffix
@@ -116,7 +120,15 @@ def unpack_video(
         ffmpeg_args += ["-loglevel", "error"]
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
-    ffmpeg_args.extend(["-i", str(input_video_path), "-start_number", str(frame_start), str(output_path)])
+    ffmpeg_args.extend(
+        [
+            "-i",
+            str(input_video_path),
+            "-start_number",
+            str(frame_start),
+            str(output_path),
+        ]
+    )
 
     command = " ".join(ffmpeg_args)
     logger.info(
@@ -150,7 +162,6 @@ def pack_video(
     loglevel: int | None = None,
     input_mode: Literal["txt", "indexes", "glob"] = "indexes",
 ):
-        
     logger.info(f"{pack_video.__name__} {input_frames_path=} to {output_video_path=}")
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -160,7 +171,9 @@ def pack_video(
     first = load_any_image(matched[0][1])
     dim = first.shape[-1] if first.ndim == 3 else 1
     encoder, pix_fmt = PROPS_TO_ENCODER_PIXFMT[(str(first.dtype), dim)]
-    logger.info(f"{pack_video.__name__} using {encoder=} {pix_fmt=} for {first.dtype=} {first.shape=}")
+    logger.info(
+        f"{pack_video.__name__} using {encoder=} {pix_fmt=} for {first.dtype=} {first.shape=}"
+    )
     encoder_args = ENCODER_ARGS[encoder]
 
     ffmpeg_args = FFMPEG_ARGS.copy()
@@ -172,13 +185,13 @@ def pack_video(
         ffmpeg_args.extend(["-threads", str(n_cpus)])
 
     # doesnt seem to be recognized for pack?
-    #ffmpeg_args.extend(
+    # ffmpeg_args.extend(
     #    [
     #        "-start_number",
     #        str(frame_start),
     #    ]
-    #)
-    
+    # )
+
     # These errors are necessary so that we are sure we will unpack to the correct paths on the other end
     # IE we rely wholly on frame_start and frame_step to name the files when unpacking, so they better explain the current filenames correctly.
     for i, (info, path) in enumerate(matched):
@@ -187,11 +200,13 @@ def pack_video(
                 f"{input_frames_path} had frame {info['frame']} for {i=} {path=}"
                 f"but {frame_start=} {frame_step=} means we expected {frame_start + i * frame_step=}"
             )
-        
+
     if input_mode == "indexes" and "{framenext}" in str(input_frames_path):
-        logger.warning(f"{input_frames_path=} contains {{framenext}} - using glob instead")
+        logger.warning(
+            f"{input_frames_path=} contains {{framenext}} - using glob instead"
+        )
         input_mode = "glob"
-        
+
     if input_mode == "txt":
         tmp_folder.mkdir(parents=True, exist_ok=True)
         input_txt_path = tmp_folder / "input.txt"
@@ -203,21 +218,49 @@ def pack_video(
                 f.write(f"file '{str(path.absolute())}'\n")
         assert input_txt_path.exists(), f"Failed to create {input_txt_path=}"
 
-        logger.warning(f"{input_mode=} may potentially drop frames. -concat treats every image as a video, and sometimes drops the last frame despite my efforts")
-        ffmpeg_args += ["-f", "concat", "-safe", "0", "-i", str(input_txt_path.absolute())]
-        ffmpeg_args += ["-fflags", "+genpts", "-avoid_negative_ts", "make_zero"] # needed to prevent invalid timestamps dropping frames
+        logger.warning(
+            f"{input_mode=} may potentially drop frames. -concat treats every image as a video, and sometimes drops the last frame despite my efforts"
+        )
+        ffmpeg_args += [
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(input_txt_path.absolute()),
+        ]
+        ffmpeg_args += [
+            "-fflags",
+            "+genpts",
+            "-avoid_negative_ts",
+            "make_zero",
+        ]  # needed to prevent invalid timestamps dropping frames
     elif input_mode == "glob":
-        ffmpeg_template = input_frames_path.parent / _template_name_to_ffmpeg_format(input_frames_path.name)
-        ffmpeg_args.extend(["-i", str(ffmpeg_template.absolute()),])
+        ffmpeg_template = input_frames_path.parent / _template_name_to_ffmpeg_format(
+            input_frames_path.name
+        )
+        ffmpeg_args.extend(
+            [
+                "-i",
+                str(ffmpeg_template.absolute()),
+            ]
+        )
     elif input_mode == "indexes":
-        ffmpeg_template = input_frames_path.parent / _template_name_to_ffmpeg_format(input_frames_path.name, as_glob=True)
-        ffmpeg_args.extend([
-            "-pattern_type", "glob", "-i", str(ffmpeg_template.absolute()),
-        ])
+        ffmpeg_template = input_frames_path.parent / _template_name_to_ffmpeg_format(
+            input_frames_path.name, as_glob=True
+        )
+        ffmpeg_args.extend(
+            [
+                "-pattern_type",
+                "glob",
+                "-i",
+                str(ffmpeg_template.absolute()),
+            ]
+        )
     else:
         raise ValueError(f"Unknown input_mode {input_mode=}")
 
-    ffmpeg_args += ["-vsync", "0"] # NO DROPPING FRAMES, preserve exact timing
+    ffmpeg_args += ["-vsync", "0"]  # NO DROPPING FRAMES, preserve exact timing
     ffmpeg_args.extend(encoder_args.split())
     ffmpeg_args.extend(["-pix_fmt", pix_fmt, "-an", str(output_video_path)])
 

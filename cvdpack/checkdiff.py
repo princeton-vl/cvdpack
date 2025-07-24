@@ -1,4 +1,3 @@
-
 import argparse
 import numpy as np
 from pathlib import Path
@@ -9,12 +8,16 @@ from . import util
 
 logger = logging.getLogger("cvdpack")
 
-def vis(before, after):
 
+def vis(before, after):
     if before.ndim == 3 and before.shape[2] == 2:
-        before = np.pad(before, ((0, 0), (0, 0), (0, 1)), mode="constant", constant_values=0)
+        before = np.pad(
+            before, ((0, 0), (0, 0), (0, 1)), mode="constant", constant_values=0
+        )
     if after.ndim == 3 and after.shape[2] == 2:
-        after = np.pad(after, ((0, 0), (0, 0), (0, 1)), mode="constant", constant_values=0)
+        after = np.pad(
+            after, ((0, 0), (0, 0), (0, 1)), mode="constant", constant_values=0
+        )
 
     plt.subplot(1, 4, 1)
     plt.imshow(before)
@@ -34,7 +37,7 @@ def vis(before, after):
     plt.figure()
     plt.scatter(before.flatten(), after.flatten())
     plt.show()
-    
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -87,26 +90,26 @@ def main():
         logger.info(f"Skipped {n_filtered} files due to {subset=}")
 
     for info, before_path in inps:
-
         before = util.load_any_image(before_path)
 
         after_path = util.format_template(args.output, info)
         if not after_path.exists():
-            raise FileNotFoundError(f"Got {before_path=} but {after_path=} does not exist")
+            raise FileNotFoundError(
+                f"Got {before_path=} but {after_path=} does not exist"
+            )
 
         after = util.load_any_image(after_path)
 
         if before.shape != after.shape:
-            raise ValueError(f"Got {before.shape=} and {after.shape=} for {before_path=} and {after_path=}")
+            raise ValueError(
+                f"Got {before.shape=} and {after.shape=} for {before_path=} and {after_path=}"
+            )
 
         valid_mask = np.isfinite(before) & np.isfinite(after)
         ok_pix = np.isclose(before, after, atol=args.atol)
 
         err = not ok_pix[valid_mask].all()
-        do_vis = (
-            args.vis == "all"
-            or (args.vis == "error" and err)
-        )
+        do_vis = args.vis == "all" or (args.vis == "error" and err)
         if do_vis:
             vis(before, after)
 
@@ -124,6 +127,7 @@ def main():
             raise ValueError(msg)
         else:
             print(msg)
+
 
 if __name__ == "__main__":
     main()
