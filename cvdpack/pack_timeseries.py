@@ -36,8 +36,10 @@ PROPS_TO_ENCODER_PIXFMT = {
     ("uint8", 1): ("ffv1", "gray"), # used for binary masks or <256 segmentation labels
     ("uint8", 3): ("ffv1", "rgb24") if not ALLOW_LOSSY_RGB_ENCODE else ("libx265", "yuv444p"), # used for rgb video or sometimes normals
     ("uint16", 1): ("ffv1", "gray16le"), # used for 1channel GT e.g. quantized depth
-    ("uint16", 3): ("ffv1", "rgb48"), # used for multichannel GT e.g. quantized flow
-    ("uint16", 4): ("ffv1", "rgba64le"), # used for packing float32s e.g. flow as 2xfloat32 becomes 4xuint16
+
+    #NOTE: I investigated specifying endianness e.g. rgb48le rgb48be when packing floats, but it doesnt seem to matter. Neither does explicitly reversing the bits
+    ("uint16", 3): ("ffv1", "rgb48"), # used for multichannel GT e.g. quantized flow and for float32 packed as 2xuint16
+    ("uint16", 4): ("ffv1", "rgba64"), 
 }
 
 FFMPEG = os.environ.get(ENVIRON_KEYS["ffmpeg"], "ffmpeg")
@@ -158,6 +160,7 @@ def pack_video(
     first = load_any_image(matched[0][1])
     dim = first.shape[-1] if first.ndim == 3 else 1
     encoder, pix_fmt = PROPS_TO_ENCODER_PIXFMT[(str(first.dtype), dim)]
+    logger.info(f"{pack_video.__name__} using {encoder=} {pix_fmt=} for {first.dtype=} {first.shape=}")
     encoder_args = ENCODER_ARGS[encoder]
 
     ffmpeg_args = FFMPEG_ARGS.copy()

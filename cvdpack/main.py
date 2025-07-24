@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import time
+import random
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -599,12 +600,10 @@ def validate_args(args: argparse.Namespace):
             f"Set {util.ENVIRON_KEYS['array_max']} to a larger value if this is appropriate forr your cluster"
         )
 
-    if args.tmp_folder is not None and args.tmp_folder.exists():
-        raise FileExistsError(
-            f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder"
-        )
-
-    # not safe to check if args.tmp_folder exists, we may be running on the headnode wheras /scratch might only exist once inside a slurm job
+    if args.tmp_folder is not None:
+        args.tmp_folder = args.tmp_folder / f"tmp_{random.randint(0, 10000)}"
+        if args.tmp_folder.exists():
+            raise FileExistsError(f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder")
 
     return args
 
