@@ -6,7 +6,7 @@ Reduce your dataset storage cost by 50-95% using lossless or quantized+lossless 
 
 :warning: Make a backup of your data, and doublecheck your experimental results are not changed by cvdpack :warning:
 
-### Installation
+## Installation
 
 You must manually install `ffmpeg` into your PATH. uv/pip will not do this for you currently. Choose an option:
 ```bash
@@ -20,7 +20,7 @@ Then, install uv. [instructions here](https://docs.astral.sh/uv/getting-started/
 
 You can now run `uvx cvdpack` as shown below. You do not need to manually install the tool if you use `uvx`. 
 
-##### Optional: install cvdpack package
+#### Optional: install cvdpack package
 
 Installing the python package is only necessary if you want to use the python interface. choose one:
 ```bash
@@ -28,11 +28,11 @@ uv pip install cvdpack
 pip install cvdpack
 ```
 
-### Getting Started:
+## Getting Started:
  
 Add `-v` or `-d` to see more output. See `uvx cvdpack --help` for all options. 
 
-##### Pack/unpack one scene of tartanair locally with quantization, h265 encoding, and small RGB changes
+#### Pack/unpack one scene of tartanair locally with quantization, h265 encoding, and small RGB changes
 
 ```bash
 CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_quantized.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
@@ -52,7 +52,7 @@ Many tradeoffs are adjustable via the json config file:
 - Choose between dynamic range and precision by adjusting the min/max quantize values
 - Choose which channels are quantized vs float16 vs float32 (they dont all have to be the same)
 
-##### WIP: Pack/unpack one scene of tartanair locally with minimal image/gt changes
+#### WIP: Pack/unpack one scene of tartanair locally with minimal image/gt changes
 Commands shown are for a single scene and video, remove --subset to do the full thing
 ```bash
 uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_floatingpoint.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
@@ -63,22 +63,22 @@ Filesizes are approx 8.6GB for the raw abandonedfactory/Hard/P000 scene, 4.5G fo
 
 This setting should be considered WIP. It is not particularly space-efficient and I am not positive that video compression adds any additional benefit over storing PNGs. It is possible the float-to-int16 strategy can be significantly improved. Currently we reinterpret cast floating point data into uint16 video, which produces nasty stripey patterns that do not compress well. TODO find a better strategy for compressing float32 data.
 
-##### Reorganize a dataset
+#### Reorganize a dataset
 ```bash
 uvx cvdpack copy --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_*.{ext} --output data/TartanAir_split/{scene}/{split}_{vid}/{cam}/{gt_type}/{frame:04d}.{ext}
 ```
 
-##### Extract a subset of a dataset
+#### Extract a subset of a dataset
 ```bash
 uvx cvdpack copy --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_*.{ext} --output data/TartanAir_split/{} --subset scene=abandonedfactory split=Hard vid=P000,P001 gt_type=image,depth cam=left
 ```
 Note: currently struggles to do the whole dataset for some dataset layouts e.g. TartanAir which stores many gt types in the same folder (flow and mask).
 
-### Dataset packing / unpacking examples
+## Dataset packing / unpacking examples
 
 All commands will assume packing via multiprocessing, but we recommend using a slurm cluster for larger datasets.
 
-##### Pack/unpack TartanAir with zero intended image/gt changes
+#### Pack/unpack TartanAir with zero intended image/gt changes
 
 ```bash
 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floatingpoint.json --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
@@ -86,7 +86,7 @@ screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/f
 screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
-##### Pack TartanAir with a minimal known gt changes
+#### Pack TartanAir with a minimal known gt changes
 
 ```bash
 sudo apt install libx265-dev
@@ -95,7 +95,7 @@ CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 uvx cvdpack pack --input /n/fs/circuitnn/data
 
 Unpacked command is unchanged. See warnings above RE losses and accessibility of the data.
 
-##### Partially pack/unpack TartanAir 
+#### Partially pack/unpack TartanAir 
 
 e.g just npys -> pngs, or just pngs -> mkvs, or mkvs -> pngs, or pngs -> npys. These can be run in sequence. 
 
@@ -109,7 +109,7 @@ For a single scene (abandonedfactory/Hard/P000):
 - Runtimes are approx 34sec, 58sec, 12sec, 23sec respectively on a AMD EPYC 7713P 64-core machine.
 - Result sizes are approx TODO, TODO, TODO, TODO respectively.
 
-##### SLURM example:
+#### SLURM example:
 
 These commands allow massively parallel packing/unpacking on a SLURM cluster. They work off the shelf for princeton-vl's cluster, you will need to customize the paths and slurm args for own cluster.
 
@@ -123,11 +123,11 @@ CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 screen uvx cvdpack pack --input /n/fs/circuit
 screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs
 ```
 
-### Acknowledgement
+## Acknowledgement
 
 This tool depends heavily on the incredible contributions of https://ffmpeg.org/ and https://opencv.org/
 
-### Contributing:
+## Contributing:
 
 Pull requests welcome!
 - No need to send PRs for typos or code style.
@@ -139,7 +139,7 @@ Use github issues for feature requests or bugs.
 
 Further development of this project might occur through community contributions, but is not a high priority for the main author(s). 
 
-##### Developer install
+#### Developer install
 
 ```bash
 git clone https://github.com/princeton-vl/cvdpack.git
@@ -154,7 +154,7 @@ You should then run all the example commands via `uv run` instead of `uvx`
 uv run pytest tests/
 ```
 
-##### Difference checker tool:
+#### Difference checker tool:
 
 Run tartanair pack and unpack, then choose one:
 
@@ -179,7 +179,7 @@ uv run -m cvdpack.checkdiff --input data/TartanAir/abandonedfactory/Hard/P000/fl
 
 Note: you can also run these with concrete single image paths and not use --subset
 
-##### Integration test:
+#### Integration test:
 
 We will always make sure that pack and unpack works for TartanAir and has no filechanges:
 
@@ -188,7 +188,7 @@ bash integration_test.sh
 ```
 
 
-##### TODOs
+#### TODOs
 
 Tentatively planned:
 - [ ] Find a better way to losslessly pack float32 into a video container. 
