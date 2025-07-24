@@ -6,15 +6,9 @@ Reduce your dataset storage cost by 50-95% using lossless or quantized+lossless 
 
 :warning: Make a backup of your data, and doublecheck your experimental results are not changed by cvdpack :warning:
 
-Currently, this tool has been minimally tested to work with the following dataset(s):
-- TartanAir
-- TODO: add support for sintel/flyingthings/etc
-
 ### Installation
 
-Required: you must have `ffmpeg` installed and in your PATH. Currently I have not configured uv/pip to install this for you (TODO)
-
-If ffmpeg is not already installed, choose an install option:
+You must manually install `ffmpeg` into your PATH. uv/pip will not do this for you currently. Choose an option:
 ```bash
 conda install ffmpeg
 sudo apt install ffmpeg
@@ -22,7 +16,7 @@ brew install ffmpeg
 # windows - TODO?
 ```
 
-Then, install uv: [instructions](https://docs.astral.sh/uv/getting-started/installation/)
+Then, install uv. [instructions here](https://docs.astral.sh/uv/getting-started/installation/)
 
 You can now run `uvx cvdpack` as shown below. You do not need to manually install the tool if you use `uvx`. 
 
