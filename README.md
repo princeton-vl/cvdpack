@@ -123,6 +123,13 @@ CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 screen uvx cvdpack pack --input /n/fs/circuit
 screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs
 ```
 
+#### Packing to remote host example
+These commands allow parallel packing locally / a SLURM cluster, and move the resulting packed `.tar.gz` file to another remote host.
+```bash
+uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir/ --config presets/tartanair_tar.json --tmp_folder /n/fs/scratch/$USER/tmp/ --remote $REMOTEUSER@$REMOTEHOST:$REMOTEHOME/TartanAir_packed_tar --n_workers 20 --subset scene=abandonedfactory vid=P000
+```
+
+
 ## Acknowledgement
 
 This tool depends heavily on the incredible contributions of https://ffmpeg.org/ and https://opencv.org/
