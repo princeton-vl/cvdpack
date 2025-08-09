@@ -1,0 +1,17 @@
+{
+    "metadata": {},
+    "data_types": {
+        "image": {
+            "original_path_template": "{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}.png",
+            "packed_path_template": "{scene}/{split}/{vid}/{gt_type}_{cam}.tar.gz",
+            "packing": {
+                "method": "CHECKBOUNDS",
+                "min_orig_val": 0,
+                "max_orig_val": 255,
+                "from_dtype": "uint8",
+                "to_dtype": "uint8"
+            }
+        }
+    }
+}
+

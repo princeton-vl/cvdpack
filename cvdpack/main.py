@@ -11,27 +11,28 @@ import json
 import logging
 import multiprocessing
 import os
+import random
 import shutil
 import subprocess
 import time
-import random
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Literal
 
 import numpy as np
-from tqdm import tqdm
-
 from cvdpack import __version__, compatibility_version
-from cvdpack import util
 from cvdpack import pack_frames
+from cvdpack import util
+from cvdpack.client import get_scp_process_queue
 from cvdpack.pack_timeseries import (
     pack_video,
     unpack_video,
     pack_tarball,
     unpack_tarball,
 )
+from tqdm import tqdm
 
 try:
     import submitit
@@ -60,6 +61,7 @@ class GtType(Enum):
 class Job:
     input_path: Path
     output_path: Path
+    remote_path: Path
     gt_type: str
     subset: dict
     tmp_folder: Path
@@ -71,6 +73,7 @@ class Job:
 def find_jobs(
     input_template: Path,
     output_template: Path,
+    remote_template: Path | None,
     gt_type: str,
     subset: dict | None,
     job_defaults: dict,
@@ -105,13 +108,14 @@ def find_jobs(
     jobs = []
     for vid_info, vid_input_path in paths:
         if subset and not util.included_in_filter(
-            vid_info, subset, allow_extra=matched_keys
+                vid_info, subset, allow_extra=matched_keys
         ):
             continue
 
         vid_info.update(subset)
 
         output_path = util.format_template(output_template, vid_info, allow_missing=[])
+        remote_path = util.format_template(remote_template, vid_info, allow_missing=[])
         if lazy and output_path.exists():
             skipped_for_lazy += 1
             continue
@@ -123,6 +127,7 @@ def find_jobs(
         job = Job(
             input_path=vid_input_path,
             output_path=output_path,
+            remote_path=remote_path,
             **job_defaults,
         )
         jobs.append(job)
@@ -179,7 +184,7 @@ def _process_video(
                 loglevel=job.loglevel,
                 tmp_folder=tmp_folder,
             )
-        case _, ".tar.gz":
+        case (_, ".tar.gz") | ( _, ".gz"):
             pack_tarball(input_path, output_path)
         case ".mkv", ".png":
             unpack_video(
@@ -219,7 +224,7 @@ def _process_video(
                 packer=packer,
                 unpack_channels_last=job.config.get("unpack_channels_last", None),
             )
-        case ".tar.gz", _:
+        case (".tar.gz", _) | (".gz", _):
             unpack_tarball(input_path, output_path)
         case ".txt", ".npy":
             data = np.loadtxt(input_path)
@@ -272,7 +277,7 @@ def process_video_job(job: Job):
         #    shutil.rmtree(tmp_path)
 
 
-def wait_jobs(launched_jobs, pbar):
+def wait_jobs(launched_jobs, pbar, success_jobs):
     """Wait for a list of submitted jobs to complete, checking periodically."""
     finished_jobs = set()
     crashed_jobs = []
@@ -286,6 +291,8 @@ def wait_jobs(launched_jobs, pbar):
             try:
                 j.result()
                 msg = f"Job {j.job_id} completed successfully"
+                if success_jobs is not None:
+                    success_jobs.put(j)
             except Exception as e:
                 msg = f"Job {j.job_id} failed with error: {e}"
                 logger.error(msg)
@@ -297,7 +304,7 @@ def wait_jobs(launched_jobs, pbar):
 
         time.sleep(1)
 
-    return crashed_jobs
+    return success_jobs, crashed_jobs
 
 
 def execute_jobs(
@@ -308,18 +315,35 @@ def execute_jobs(
     n_workers: int | None,
     slurm_args: dict | None,
     cpus_per_worker: int | None = None,
+    ssh_config: dict | None = None,
 ):
     logger.info(f"Executing {len(jobs)} jobs with {parallel_mode=} {n_workers=}")
+
+    scp_process, scp_queue = get_scp_process_queue(ssh_config)
+    if scp_process is not None:
+        scp_process.start()
 
     if n_workers is None:
         for job in jobs:
             func(job)
+            if scp_queue is not None:
+                logger.debug(f'Queueing job {job}')
+                scp_queue.put(job)
+        if scp_process is not None:
+            scp_queue.put(None)
+            scp_process.join()
         return
 
     match parallel_mode:
         case "multiprocess":
             with multiprocessing.Pool(n_workers) as pool:
-                pool.map(func, jobs)
+                results = [pool.apply_async(func, (job,)) for job in jobs]
+                for r, j in zip(results, jobs):
+                    r.wait()
+                    if scp_process is not None:
+                        logger.info(f'{j} in the queue')
+                        scp_queue.put(deepcopy(j))
+
         case "slurm":
             if submitit is None:
                 raise ValueError(
@@ -344,8 +368,9 @@ def execute_jobs(
             pbar = tqdm(total=len(jobs), desc="Running jobs")
             crashed = []
             for i in range(0, len(jobs), SLURM_ARRAY_MAX):
-                launched = executor.map_array(func, jobs[i : i + SLURM_ARRAY_MAX])
-                crashed += wait_jobs(launched, pbar)
+                launched = executor.map_array(func, jobs[i: i + SLURM_ARRAY_MAX])
+                crashed_jobs = wait_jobs(launched, pbar, scp_queue)
+                crashed += crashed_jobs
             if len(crashed) > 0:
                 raise ValueError(
                     f"{len(crashed)} jobs crashed, dataset is likely not safe to use. "
@@ -354,10 +379,15 @@ def execute_jobs(
         case _:
             raise ValueError(f"Invalid {parallel_mode=}")
 
+    if scp_process is not None:
+        scp_queue.put(None)
+        scp_process.join()
+
 
 def decide_dataset_job_templates(
     input_folder: Path,
     output_folder: Path,
+    remote_folder: Path,
     datatype_conf: dict,
     steps: list[str] | None,
     mode: Literal["pack", "unpack"],
@@ -388,7 +418,7 @@ def decide_dataset_job_templates(
 
     if steps is None:
         logger.debug(f"No steps specified, using default {inp=} {out=}")
-        return input_folder / inp, output_folder / out
+        return input_folder / inp, output_folder / out, remote_folder / out
     if len(steps) == 0:
         raise ValueError("User specified empty --steps, there is no work to be done?")
 
@@ -430,7 +460,7 @@ def decide_dataset_job_templates(
             "packing from txt->npy happens in quantize/unquantize not video pack"
         )
     elif (
-        mode == "unpack" and default_src.suffix == ".npy" and steps == ["unpack_video"]
+            mode == "unpack" and default_src.suffix == ".npy" and steps == ["unpack_video"]
     ):
         out = out.with_suffix(default_src.suffix)
         logger.debug(
@@ -442,12 +472,13 @@ def decide_dataset_job_templates(
             f"{decide_dataset_job_templates=} didnt match any cases, using {inp=} {out=}"
         )
 
-    return input_folder / inp, output_folder / out
+    return input_folder / inp, output_folder / out, remote_folder / out
 
 
 def pack_dataset(
     input_folder: Path,
     output_folder: Path,
+    remote_folder: Path,
     steps: list[str] | None,
     config: dict | None,
     parallel_mode: Literal["multiprocess", "slurm", "none"],
@@ -458,6 +489,7 @@ def pack_dataset(
     lazy: bool,
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
+    ssh_config: dict | None = None,
 ):
     if config is None:
         raise ValueError(
@@ -467,9 +499,10 @@ def pack_dataset(
 
     jobs = []
     for gt_type, datatype_conf in config["data_types"].items():
-        input_template, output_template = decide_dataset_job_templates(
+        input_template, output_template, remote_template = decide_dataset_job_templates(
             input_folder,
             output_folder,
+            remote_folder,
             datatype_conf,
             steps,
             "pack",
@@ -488,6 +521,7 @@ def pack_dataset(
             find_jobs(
                 input_template=input_template,
                 output_template=output_template,
+                remote_template=remote_template,
                 gt_type=gt_type,
                 subset=subset,
                 job_defaults=job_defaults,
@@ -496,15 +530,16 @@ def pack_dataset(
             )
         )
 
-    execute_jobs(
-        log_folder=output_folder / "logs",
-        func=process_video_job,
-        jobs=jobs,
-        parallel_mode=parallel_mode,
-        n_workers=n_workers,
-        slurm_args=slurm_args,
-        cpus_per_worker=cpus_per_worker,
-    )
+        execute_jobs(
+            log_folder=output_folder / "logs",
+            func=process_video_job,
+            jobs=jobs,
+            parallel_mode=parallel_mode,
+            n_workers=n_workers,
+            slurm_args=slurm_args,
+            cpus_per_worker=cpus_per_worker,
+            ssh_config=ssh_config
+        )
 
 
 def unpack_dataset(
@@ -520,6 +555,7 @@ def unpack_dataset(
     lazy: bool,
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
+    ssh_config: dict | None = None,
 ):
     if config is None:
         raise ValueError(
@@ -529,9 +565,10 @@ def unpack_dataset(
 
     jobs = []
     for gt_type, datatype_conf in config["data_types"].items():
-        search_input_template, search_output_template = decide_dataset_job_templates(
+        search_input_template, search_output_template, _ = decide_dataset_job_templates(
             input_folder,
             output_folder,
+            None,
             datatype_conf,
             steps,
             mode="unpack",
@@ -566,10 +603,14 @@ def unpack_dataset(
         n_workers=n_workers,
         slurm_args=slurm_args,
         cpus_per_worker=cpus_per_worker,
+        ssh_config=ssh_config
     )
 
 
 def validate_args(args: argparse.Namespace):
+    assert args.remote is not None or args.output is not None
+    "Either args.remote or args.output must be set"
+
     if args.config is not None and args.config.parts[0] == "presets":
         args.config = Path(__file__).parent / args.config
 
@@ -579,8 +620,8 @@ def validate_args(args: argparse.Namespace):
         )
 
     avoids_ffmpeg = (
-        args.steps is not None
-        and len(set(args.steps).intersection({"pack_video", "unpack_video"})) == 0
+            args.steps is not None
+            and len(set(args.steps).intersection({"pack_video", "unpack_video"})) == 0
     )
 
     if not avoids_ffmpeg:
@@ -606,17 +647,23 @@ def validate_args(args: argparse.Namespace):
                 f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder"
             )
 
+    if args.output is None:
+        args.output = args.tmp_folder / str(args.remote).partition(':')[-1].lstrip('/')
+
+    if args.remote is None:
+        args.remote = args.output
+
     return args
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description=f"""
-        Cvdpack is a tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos.
+Cvdpack is a tool to reorganize and save space on your computer vision datasets, such as RGB / Depth / Flow / SurfaceNormal framesets or videos.
 
-        Note: you can customize some features by overriding environment variables:
-          {list(util.ENVIRON_KEYS.values())}
-        """,
+Note: you can customize some features by overriding environment variables:
+{list(util.ENVIRON_KEYS.values())}
+""",
     )
     parser.add_argument(
         "action",
@@ -628,7 +675,8 @@ def parse_args():
         ],
     )
     parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--remote", type=Path, default=None)
 
     parser.add_argument(
         "--steps",
@@ -676,7 +724,15 @@ def parse_args():
     )
     parser.add_argument("--tmp_folder", type=Path, default=None)
     parser.add_argument("--lazy", action="store_true", default=False)
-
+    parser.add_argument(
+        "--ssh_config",
+        type=str,
+        nargs="*",
+        default=["ControlPath=~/.ssh/controlmasters/%h", "ControlMaster=auto", "ControlPersist=1h"],
+        help=(
+            "ssh configs when using remote hosts"
+        ),
+    )
     parser.add_argument("--overwrite", action="store_true", default=False)
     parser.add_argument(
         "-d",
@@ -714,13 +770,13 @@ def copy_files(
     # in which case we just assume the templates are the same, e.g. for doing subsetting
     match input_template.name == "{}", output_template.name == "{}":
         case False, True:
-            input_rel = Path(*input_template.parts[len(output_template.parts) :])
+            input_rel = Path(*input_template.parts[len(output_template.parts):])
             logger.info(
                 f"{output_template=} was a folder, inferring template {output_template / input_rel} based on input"
             )
             output_template = output_template / input_rel
         case True, False:
-            output_rel = Path(*output_template.parts[len(input_template.parts) :])
+            output_rel = Path(*output_template.parts[len(input_template.parts):])
             logger.info(
                 f"{input_template=} was a folder, inferring template {input_template / output_rel} based on output"
             )
@@ -784,6 +840,7 @@ def main():
         handlers=[logging.StreamHandler()],
     )
     logger.setLevel(args.loglevel)
+    logger.info(f'Running with {args=}')
 
     config_path = args.config
     if config_path is None:
@@ -806,9 +863,9 @@ def main():
         )
 
     if (
-        config_version is not None
-        and not args.no_verify_version
-        and config_version != __version__
+            config_version is not None
+            and not args.no_verify_version
+            and config_version != __version__
     ):
         logger.warning(
             f"Config {config_path} was made for cvdpack version {config_version} which does not match installed cvdpack={__version__} "
@@ -816,6 +873,16 @@ def main():
         )
 
     subset = util.parse_dictlist_strings(args.subset)
+    ssh_config = util.parse_dictlist_strings(args.ssh_config)
+    remote = str(args.remote).rpartition(':')[0]
+    if '@' in remote:
+        user, hostname = remote.split('@')
+    else:
+        user = None
+        hostname = remote
+    ssh_config["HostName"] = hostname
+    ssh_config["User"] = user
+
     dataset_jobprocess_kwargs = dict(
         steps=args.steps,
         config=config,
@@ -827,6 +894,7 @@ def main():
         lazy=args.lazy,
         cpus_per_worker=args.cpus_per_worker,
         loglevel=args.loglevel,
+        ssh_config=ssh_config,
     )
 
     match args.action:
@@ -835,7 +903,7 @@ def main():
                 raise ValueError(
                     f"pack_dataset requires input to be a directory: {args.input=}"
                 )
-            pack_dataset(args.input, args.output, **dataset_jobprocess_kwargs)
+            pack_dataset(args.input, args.output, args.remote, **dataset_jobprocess_kwargs)
         case "unpack":
             if not args.input.is_dir():
                 raise ValueError(
@@ -843,7 +911,9 @@ def main():
                 )
             unpack_dataset(args.input, args.output, **dataset_jobprocess_kwargs)
         case "copy":
-            copy_files(args.input, args.output, subset=subset, loglevel=args.loglevel)
+            copy_files(
+                args.input, args.output, subset=subset, loglevel=args.loglevel
+            )
         case _:
             raise ValueError(f"Invalid {args.action=}")
 
