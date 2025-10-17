@@ -216,6 +216,25 @@ class F32As2Int16ReinterpretPacker(Packer):
         img = img_packed.view(dtype=np.float32)
         return img
 
+def interleave_bits(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    assert a.dtype == np.uint16
+    assert b.dtype == np.uint16
+    assert a.shape == b.shape
+    res = np.zeros_like(a, dtype=np.uint32)
+    for i in range(16):
+        res |= ((a >> i) & 1) << (2 * i)
+        res |= ((b >> i) & 1) << (2 * i + 1)
+    return res
+
+def split_alternating_bits(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    assert a.dtype == np.uint32, a.dtype
+    res1 = np.zeros_like(a, dtype=np.uint16)
+    res2 = np.zeros_like(a, dtype=np.uint16)
+    for i in range(16):
+        res1 |= ((a >> (2 * i)) & 1) << i
+        res2 |= ((a >> (2 * i + 1)) & 1) << i
+    return res1, res2
+
 class F32AsExpMantissa16ReinterpretPacker(Packer):
     """
     Reinterprets one f32 channel into 3 uint16 image channels, 
