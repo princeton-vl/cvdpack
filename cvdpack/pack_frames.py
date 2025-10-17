@@ -8,7 +8,7 @@ from .util import match_template_paths, format_template, load_any_image, save_an
 
 logger = logging.getLogger("cvdpack")
 
-DTYPE_MAP = {
+DTYPE_MAP: dict[str, np.dtype] = {
     "uint8": np.uint8,
     "uint16": np.uint16,
     "uint32": np.uint32,
@@ -24,6 +24,7 @@ class PackMethod(Enum):
     INV = "inv"
     F32_AS_2INT16 = "f32_as_2int16"
     F16_AS_INT16 = "f16_as_int16"
+    F32_AS_EXP_MANTISSA_16 = "f32_as_exp_mantissa_16"
     CHECKBOUNDS = "checkbounds"
 
     @classmethod
@@ -181,10 +182,6 @@ class F32As2Int16ReinterpretPacker(Packer):
     Reinterprets one f32 channel into 2 uint16 image channels.
 
     Unfortunately the f32 exponent / mantissa do not neatly align with 16bits.
-
-    Currently we just ignore and hope the resulting images compress ok.
-
-    TODO: we could split into 3 uint16 channels with better alignment? does this matter?
     """
 
     def __init__(self, scalar: float):
@@ -219,6 +216,71 @@ class F32As2Int16ReinterpretPacker(Packer):
         img = img_packed.view(dtype=np.float32)
         return img
 
+class F32AsExpMantissa16ReinterpretPacker(Packer):
+    """
+    Reinterprets one f32 channel into 3 uint16 image channels, 
+    - channel 1: least significant 16 bits of mantissa (bits 0 to 15)
+    - channel 2: most significant 7 bits of mantissa (bits 16 to 22)
+    - channel 3: sign bit + 8 bits of exponent (bits 23 to 31)
+    """
+
+    mantissa_bits = 23
+
+    def __init__(self, scalar: float):
+        self.scalar = scalar
+
+    def pack(self, img: np.ndarray):
+        if img.ndim == 2:
+            img = img[..., np.newaxis]
+        if img.dtype != np.float32:
+            raise ValueError(
+                f"Expected float32 for {PackMethod.F32_AS_2INT16=}, got {img.dtype=}, {img.shape=}"
+            )
+        if img.shape[2] != 1:
+            raise ValueError(
+                f"Expected 1 channel for {PackMethod.F32_AS_EXP_MANTISSA_16=}, got {img.shape=}"
+            )
+
+        img = img.view(dtype=np.uint32) 
+        img_quant = np.empty((img.shape[0], img.shape[1], 3), dtype=np.uint16)
+        img_quant[:, :, ::3] = (img & ((1 << 16) - 1)).astype(np.uint16)
+        img_quant[:, :, 1::3] = ((img >> 16) & ((1 << 7) - 1)).astype(np.uint16)
+        img_quant[:, :, 2::3] = (img >> 23).astype(np.uint16)
+
+        if False:
+            import matplotlib.pyplot as plt
+            plt.subplot(1, 5, 1)
+            plt.title("Original")
+            plt.imshow(img[:, :, 0].astype(np.float32))
+            plt.colorbar()
+            plt.subplot(1, 5, 2)
+            plt.title("Sign + Exponent")
+            plt.imshow(img_quant[:, :, 2].astype(np.float32))
+            plt.colorbar()
+            plt.subplot(1, 5, 3)
+            plt.title("Mantissa1")
+            plt.imshow(img_quant[:, :, 0].astype(np.float32))
+            plt.colorbar()  
+            plt.subplot(1, 5, 4)
+            plt.title("Mantissa2")
+            plt.imshow(img_quant[:, :, 1].astype(np.float32))        
+            plt.colorbar()        
+            plt.show()
+
+        return img_quant
+
+    def unpack(self, img_packed: np.ndarray):
+
+        assert img_packed.shape[2] == 3
+
+        rec = img_packed.astype(dtype=np.uint32)
+        rec = (
+            (rec[:, :, ::3])
+            | (rec[:, :, 1::3] << 16) 
+            | (rec[:, :, 2::3] << 23)
+        )
+        img = rec.view(dtype=np.float32)
+        return img
 
 class F16ToInt16ReinterpretPacker(Packer):
     """
@@ -315,6 +377,8 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
                 out_of_bounds_method=out_of_bounds_method,
             )
         case PackMethod.INV:
+            assert isinstance(min_orig_val, (float, int)), f"{min_orig_val=}"
+            assert isinstance(max_orig_val, (float, int)), f"{max_orig_val=}"
             return InvQuantizeInt16Packer(
                 min_orig_val=min_orig_val,
                 max_orig_val=max_orig_val,
@@ -324,6 +388,10 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
             )
         case PackMethod.F32_AS_2INT16:
             return F32As2Int16ReinterpretPacker(
+                scalar=packing_config.get("scalar", 1.0),
+            )
+        case PackMethod.F32_AS_EXP_MANTISSA_16:
+            return F32AsExpMantissa16ReinterpretPacker(
                 scalar=packing_config.get("scalar", 1.0),
             )
         case PackMethod.F16_AS_INT16:

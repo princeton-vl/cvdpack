@@ -25,6 +25,7 @@ dependencies = [
 ]
 dev = [
     "ruff",
+    "pytest",
 ]
 slurm = [
     "submitit",

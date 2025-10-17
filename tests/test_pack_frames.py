@@ -1,13 +1,6 @@
 import numpy as np
 
-from cvdpack.pack_frames import (
-    LinearQuantizeIntPacker,
-    InvQuantizeInt16Packer,
-    CheckBoundsPacker,
-    F32As2Int16ReinterpretPacker,
-    F16ToInt16ReinterpretPacker,
-)
-
+from cvdpack import pack_frames as pack
 
 def test_linear_pack_method():
     np.random.seed(42)
@@ -15,7 +8,7 @@ def test_linear_pack_method():
     min_val, max_val = 0.0, 100.0
     to_dtype = np.uint16
 
-    packer = LinearQuantizeIntPacker(min_val, max_val, data.dtype, to_dtype)
+    packer = pack.LinearQuantizeIntPacker(min_val, max_val, data.dtype, to_dtype)
     packed = packer.pack(data)
     unpacked = packer.unpack(packed)
 
@@ -29,7 +22,7 @@ def test_inv_pack_method():
     min_val, max_val = 0.1, 50.0
     to_dtype = np.uint16
 
-    packer = InvQuantizeInt16Packer(min_val, max_val, data.dtype, to_dtype)
+    packer = pack.InvQuantizeInt16Packer(min_val, max_val, data.dtype, to_dtype)
     packed = packer.pack(data)
     unpacked = packer.unpack(packed)
 
@@ -42,7 +35,7 @@ def test_checkbounds_pack_method():
     min_val, max_val = 0, 1000
     to_dtype = np.uint16
 
-    packer = CheckBoundsPacker(min_val, max_val, to_dtype, data.dtype)
+    packer = pack.CheckBoundsPacker(min_val, max_val, to_dtype, data.dtype)
     packed = packer.pack(data)
     unpacked = packer.unpack(packed)
 
@@ -54,19 +47,26 @@ def test_onechannel_f32_as_2int16_pack_method():
     min_val, max_val = -100.0, 100.0
     data = np.random.uniform(min_val, max_val, (32, 32)).astype(np.float32)
 
-    packer = F32As2Int16ReinterpretPacker(scalar=1.0)
+    packer = pack.F32As2Int16ReinterpretPacker(scalar=1.0)
     packed = packer.pack(data)
     unpacked = packer.unpack(packed).squeeze(-1)
 
     np.testing.assert_allclose(unpacked, data, rtol=1e-6)
 
+def test_onechannel_f32_as_exp_mantissa_16_pack_method():
+    np.random.seed(42)
+    data = np.random.uniform(-100.0, 100.0, (32, 32)).astype(np.float32)
+    packer = pack.F32AsExpMantissa16ReinterpretPacker(scalar=1.0)
+    packed = packer.pack(data)
+    unpacked = packer.unpack(packed).squeeze(-1)
+    np.testing.assert_allclose(unpacked, data, rtol=1e-6)
 
 def test_multichannel_to_f16_as_int16_pack_method():
     np.random.seed(42)
     data = np.random.uniform(-1000, 1000, (32, 32, 3)).astype(np.float32)
     _min_val, _max_val = 0.0, 1.0
 
-    packer = F16ToInt16ReinterpretPacker(scalar=1.0)
+    packer = pack.F16ToInt16ReinterpretPacker(scalar=1.0)
     packed = packer.pack(data)
     unpacked = packer.unpack(packed)
 
@@ -85,10 +85,19 @@ def test_nan_handling():
     min_val, max_val = 1.0, 10.0
     to_dtype = np.uint16
 
-    packer = LinearQuantizeIntPacker(min_val, max_val, data.dtype, to_dtype)
+    packer = pack.LinearQuantizeIntPacker(min_val, max_val, data.dtype, to_dtype)
     packed = packer.pack(data)
     unpacked = packer.unpack(packed)
 
     nan_mask = np.isnan(data)
     assert np.isnan(unpacked[nan_mask]).all()
     np.testing.assert_allclose(unpacked[~nan_mask], data[~nan_mask], rtol=1e-3)
+
+def test_interleave_deinterleave_bits():
+    np.random.seed(42)
+    a = np.random.randint(0, 2, 16, dtype=np.uint16)
+    b = np.random.randint(0, 2, 16, dtype=np.uint16)
+    c = pack.interleave_bits(a, b)
+    d = pack.split_alternating_bits(c)
+    np.testing.assert_array_equal(a, d[0])
+    np.testing.assert_array_equal(b, d[1])

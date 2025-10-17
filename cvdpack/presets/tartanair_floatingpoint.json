@@ -16,7 +16,7 @@
             "original_path_template": "{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}_{gt_type}.npy",
             "packed_path_template": "{scene}/{split}/{vid}/{gt_type}_{cam}.mkv",
             "packing": {
-                "method": "F32_AS_2INT16",
+                "method": "F32_AS_EXP_MANTISSA_16",
                 "out_of_bounds_method": "error"
             }
         },
