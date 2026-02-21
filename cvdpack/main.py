@@ -152,7 +152,10 @@ def _process_video(
     frame_start = job.config.get("frame_start", 0)
     frame_step = job.config.get("frame_step", 1)
 
-    match input_path.suffix, output_path.suffix:
+    def _eff_suffix(p: Path) -> str:
+        return ".tar.gz" if p.name.endswith(".tar.gz") else p.suffix
+
+    match _eff_suffix(input_path), _eff_suffix(output_path):
         case ".png", ".mkv":
             pack_video(
                 input_path,
