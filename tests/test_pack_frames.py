@@ -6,6 +6,7 @@ from cvdpack.pack_frames import (
     CheckBoundsPacker,
     F32As2Int16ReinterpretPacker,
     F16ToInt16ReinterpretPacker,
+    UnitSphereAs2F32AnglesPacker,
 )
 
 
@@ -92,3 +93,45 @@ def test_nan_handling():
     nan_mask = np.isnan(data)
     assert np.isnan(unpacked[nan_mask]).all()
     np.testing.assert_allclose(unpacked[~nan_mask], data[~nan_mask], rtol=1e-3)
+
+
+def _random_unit_normals(rng, shape):
+    v = rng.standard_normal((*shape, 3)).astype(np.float32)
+    v /= np.linalg.norm(v, axis=-1, keepdims=True)
+    return v
+
+
+def test_unit_sphere_roundtrip():
+    rng = np.random.default_rng(0)
+    data = _random_unit_normals(rng, (64, 64))
+
+    packer = UnitSphereAs2F32AnglesPacker()
+    packed = packer.pack(data)
+    unpacked = packer.unpack(packed)
+
+    assert packed.dtype == np.uint16
+    assert packed.shape == (64, 64, 4)
+    assert unpacked.shape == (64, 64, 3)
+    np.testing.assert_allclose(unpacked, data, atol=1e-5)
+
+
+def test_unit_sphere_background_zeros():
+    rng = np.random.default_rng(1)
+    data = _random_unit_normals(rng, (32, 32))
+    data[::4, ::4] = 0.0  # background pixels
+
+    packer = UnitSphereAs2F32AnglesPacker()
+    packed = packer.pack(data)
+    unpacked = packer.unpack(packed)
+
+    bg = np.all(data == 0, axis=-1)
+    np.testing.assert_array_equal(unpacked[bg], 0.0)
+    np.testing.assert_allclose(unpacked[~bg], data[~bg], atol=1e-5)
+
+
+def test_unit_sphere_poles():
+    packer = UnitSphereAs2F32AnglesPacker()
+    poles = np.array([[[0, 0, 1]], [[0, 0, -1]]], dtype=np.float32)  # (2, 1, 3)
+    packed = packer.pack(poles)
+    unpacked = packer.unpack(packed)
+    np.testing.assert_allclose(unpacked, poles, atol=1e-5)

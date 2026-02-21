@@ -25,6 +25,7 @@ class PackMethod(Enum):
     F32_AS_2INT16 = "f32_as_2int16"
     F16_AS_INT16 = "f16_as_int16"
     CHECKBOUNDS = "checkbounds"
+    UNIT_SPHERE_AS_2F32_ANGLES = "3f32_unit_sphere_as_2f32_angles"
 
     @classmethod
     def from_str(cls, s: str):
@@ -292,6 +293,53 @@ class CheckBoundsPacker(Packer):
         return img_packed.astype(self.from_dtype)
 
 
+class UnitSphereAs2F32AnglesPacker(Packer):
+    """
+    Losslessly encodes a (H, W, 3) float32 unit-sphere field (e.g. surface normals)
+    as two float32 spherical angles, then reinterprets as 4×uint16 for video storage.
+
+    theta = atan2(y, x)  in [-pi, pi]
+    phi   = asin(z)      in [-pi/2, pi/2]
+
+    Zero vectors (background pixels) are stored as NaN and restored to zero on unpack.
+    Round-trip error is at float32 trig precision (~1e-7).
+    """
+
+    def pack(self, img: np.ndarray) -> np.ndarray:
+        if img.ndim != 3 or img.shape[2] != 3:
+            raise ValueError(f"Expected (H, W, 3) float32, got {img.shape=}")
+        if img.dtype != np.float32:
+            raise ValueError(f"Expected float32, got {img.dtype=}")
+
+        is_bg = np.linalg.norm(img, axis=-1) < 1e-6
+
+        theta = np.arctan2(img[..., 1], img[..., 0]).astype(np.float32)
+        phi = np.arcsin(np.clip(img[..., 2], -1.0, 1.0)).astype(np.float32)
+
+        theta[is_bg] = np.nan
+        phi[is_bg] = np.nan
+
+        angles = np.stack([theta, phi], axis=-1)  # (H, W, 2) float32
+        return np.ascontiguousarray(angles).view(np.uint16)  # (H, W, 4) uint16
+
+    def unpack(self, img_packed: np.ndarray) -> np.ndarray:
+        if img_packed.dtype != np.uint16:
+            raise ValueError(f"Expected uint16, got {img_packed.dtype=}")
+        angles = np.ascontiguousarray(img_packed).view(np.float32)  # (H, W, 2) float32
+
+        theta = angles[..., 0]
+        phi = angles[..., 1]
+        is_bg = np.isnan(theta)
+
+        x = (np.cos(phi) * np.cos(theta)).astype(np.float32)
+        y = (np.cos(phi) * np.sin(theta)).astype(np.float32)
+        z = np.sin(phi).astype(np.float32)
+
+        result = np.stack([x, y, z], axis=-1)
+        result[is_bg] = 0.0
+        return result
+
+
 def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
     min_orig_val = packing_config.get("min_orig_val", None)
     max_orig_val = packing_config.get("max_orig_val", None)
@@ -338,6 +386,8 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
                 to_dtype=to_dtype,
                 from_dtype=from_dtype,
             )
+        case PackMethod.UNIT_SPHERE_AS_2F32_ANGLES:
+            return UnitSphereAs2F32AnglesPacker()
         case _:
             raise ValueError(f"Invalid {packing_config['method']=}")
 
