@@ -6,6 +6,7 @@ from cvdpack.pack_frames import (
     CheckBoundsPacker,
     F32As2Int16ReinterpretPacker,
     F16ToInt16ReinterpretPacker,
+    F32AsLogInt16Packer,
     UnitSphereAs2F32AnglesPacker,
 )
 
@@ -99,6 +100,18 @@ def _random_unit_normals(rng, shape):
     v = rng.standard_normal((*shape, 3)).astype(np.float32)
     v /= np.linalg.norm(v, axis=-1, keepdims=True)
     return v
+
+
+def test_log_int16_roundtrip():
+    d_min, d_max = 0.05, 5633.0
+    data = np.logspace(np.log10(d_min), np.log10(d_max), 64 * 64).reshape(64, 64).astype(np.float32)
+    packer = F32AsLogInt16Packer(min_orig_val=d_min, max_orig_val=d_max)
+    packed = packer.pack(data)
+    unpacked = packer.unpack(packed)
+    assert packed.dtype == np.uint16
+    assert packed.shape == (64, 64)
+    expected_rtol = np.log(d_max / d_min) / 65534
+    np.testing.assert_allclose(unpacked, data, rtol=expected_rtol * 1.01)
 
 
 def test_unit_sphere_roundtrip():

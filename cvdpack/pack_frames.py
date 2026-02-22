@@ -24,6 +24,7 @@ class PackMethod(Enum):
     INV = "inv"
     F32_AS_2INT16 = "f32_as_2int16"
     F16_AS_INT16 = "f16_as_int16"
+    F32_AS_LOG_INT16 = "f32_as_log_int16"
     CHECKBOUNDS = "checkbounds"
     UNIT_SPHERE_AS_2F32_ANGLES = "3f32_unit_sphere_as_2f32_angles"
 
@@ -340,6 +341,43 @@ class UnitSphereAs2F32AnglesPacker(Packer):
         return result
 
 
+class F32AsLogInt16Packer(Packer):
+    """
+    Encodes a positive float32 channel as a single uint16 using log-uniform quantization.
+
+    Relative precision is constant at all depths: error ≈ value * log(max/min) / 65534.
+    NaN is encoded as uint16 max (65535), matching the convention of LinearQuantizeIntPacker.
+
+    With min_orig_val=0.05, max_orig_val=5633 the bin size is ~0.18mm at 1m and ~1m at 5km.
+    """
+
+    def __init__(
+        self,
+        min_orig_val: float,
+        max_orig_val: float,
+        out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
+    ):
+        assert min_orig_val > 0, min_orig_val
+        self.min_orig_val = min_orig_val
+        self.max_orig_val = max_orig_val
+        self.log_min = np.log(min_orig_val)
+        self.log_max = np.log(max_orig_val)
+        self.out_of_bounds_method = out_of_bounds_method
+
+    def pack(self, img: np.ndarray) -> np.ndarray:
+        img = _oob_to_nan_or_error(
+            img, self.min_orig_val, self.max_orig_val, self.out_of_bounds_method
+        )
+        log_img = np.log(img.astype(np.float64))
+        img_norm = (log_img - self.log_min) / (self.log_max - self.log_min)
+        return _pack_to_int_with_nan_to_imax(img_norm, np.uint16)
+
+    def unpack(self, img_packed: np.ndarray) -> np.ndarray:
+        img_norm = _unpack_from_int_with_imax_to_nan(img_packed, np.uint16)
+        log_img = img_norm * (self.log_max - self.log_min) + self.log_min
+        return np.exp(log_img).astype(np.float32)
+
+
 def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
     min_orig_val = packing_config.get("min_orig_val", None)
     max_orig_val = packing_config.get("max_orig_val", None)
@@ -378,6 +416,12 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
             return F16ToInt16ReinterpretPacker(
                 scalar=packing_config.get("scalar", 1.0),
                 out_of_bounds_method=out_of_bounds_method,
+            )
+        case PackMethod.F32_AS_LOG_INT16:
+            return F32AsLogInt16Packer(
+                min_orig_val=min_orig_val,
+                max_orig_val=max_orig_val,
+                out_of_bounds_method=out_of_bounds_method or "nan_warn",
             )
         case PackMethod.CHECKBOUNDS:
             return CheckBoundsPacker(
