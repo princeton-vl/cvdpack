@@ -1,6 +1,6 @@
 [project]
 name = "cvdpack"
-version = "0.1.0"
+version = "0.2.0-alpha"
 license = {text = "BSD-3-Clause"}
 license-files = ["LICENSE"]
 description = "Quantize and video-compress your RGB/Depth/Flow/SurfaceNormal datasets"
@@ -48,3 +48,8 @@ dev = [
 # based on https://github.com/astral-sh/trusted-publishing-examples/blob/main/pyproject.toml
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]

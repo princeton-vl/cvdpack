@@ -100,7 +100,7 @@ wheels = [
 
 [[package]]
 name = "cvdpack"
-version = "0.0.4"
+version = "0.2.0a0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -118,6 +118,11 @@ slurm = [
     { name = "submitit" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", marker = "extra == 'dev'" },
@@ -129,6 +134,9 @@ requires-dist = [
     { name = "tqdm" },
 ]
 provides-extras = ["slurm", "dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.4.1" }]
 
 [[package]]
 name = "cycler"
