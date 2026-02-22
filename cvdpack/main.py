@@ -237,7 +237,8 @@ def _process_video(
             np.savetxt(output_path, data)
             assert output_path.exists(), f"Failed to save {output_path=}"
         case x, y if x == y:
-            shutil.copy(input_path, output_path)
+            if not input_path.resolve() == output_path.resolve():
+                shutil.copy(input_path, output_path)
         case _:
             raise ValueError(f"Invalid {input_path.suffix=} {output_path.suffix=}")
 
@@ -768,7 +769,8 @@ def copy_files(
         output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.debug(f"Copying {input_file_path} -> {output_file_path}")
-        shutil.copy(input_file_path, output_file_path)
+        if not input_file_path.resolve() == output_file_path.resolve():
+            shutil.copy(input_file_path, output_file_path)
 
 
 def format_for_json(obj):
