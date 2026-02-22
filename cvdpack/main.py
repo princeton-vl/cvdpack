@@ -100,6 +100,8 @@ def find_jobs(
         input_template_extra = None
 
     paths = list(util.match_template_paths(search_template))
+    if input_template_extra:
+        paths = [(info, p) for info, p in paths if p.is_dir()]
 
     skipped_for_lazy = 0
     jobs = []
