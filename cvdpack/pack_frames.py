@@ -296,7 +296,7 @@ class CheckBoundsPacker(Packer):
 
 class UnitSphereAs2F32AnglesPacker(Packer):
     """
-    Losslessly encodes a (H, W, 3) float32 unit-sphere field (e.g. surface normals)
+    encodes a (H, W, 3) float32 unit-sphere field (e.g. surface normals)
     as two float32 spherical angles, then reinterprets as 4×uint16 for video storage.
 
     theta = atan2(y, x)  in [-pi, pi]
