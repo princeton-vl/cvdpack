@@ -14,7 +14,8 @@ import os
 import shutil
 import subprocess
 import time
-import random
+import tempfile
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -516,7 +517,7 @@ def pack_dataset(
         )
 
     execute_jobs(
-        log_folder=output_folder / "logs",
+        log_folder=output_folder / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_pack",
         func=process_video_job,
         jobs=jobs,
         parallel_mode=parallel_mode,
@@ -578,13 +579,34 @@ def unpack_dataset(
         )
 
     execute_jobs(
-        log_folder=output_folder / "logs",
+        log_folder=output_folder / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_unpack",
         func=process_video_job,
         jobs=jobs,
         parallel_mode=parallel_mode,
         n_workers=n_workers,
         slurm_args=slurm_args,
         cpus_per_worker=cpus_per_worker,
+    )
+
+
+def select_tmp_folder(candidates: list[Path], min_space_mb: int) -> Path:
+    for candidate in candidates:
+        try:
+            root = candidate
+            while not root.exists():
+                root = root.parent
+            free_mb = shutil.disk_usage(root).free // (1024 * 1024)
+            if free_mb < min_space_mb:
+                logger.info(f"Skipping {candidate}: only {free_mb}MB free, need {min_space_mb}MB")
+                continue
+            candidate.mkdir(parents=True, exist_ok=True)
+            return Path(tempfile.mkdtemp(dir=candidate))
+        except OSError as e:
+            logger.info(f"Skipping {candidate}: {e}")
+            continue
+    raise RuntimeError(
+        f"No usable tmp_folder found among candidates {candidates} "
+        f"(need {min_space_mb}MB free and write access)"
     )
 
 
@@ -619,11 +641,7 @@ def validate_args(args: argparse.Namespace):
         )
 
     if args.tmp_folder is not None:
-        args.tmp_folder = args.tmp_folder / f"tmp_{random.randint(0, 10000)}"
-        if args.tmp_folder.exists():
-            raise FileExistsError(
-                f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder"
-            )
+        args.tmp_folder = select_tmp_folder(args.tmp_folder, args.min_tmp_folder_space_mb)
 
     return args
 
@@ -693,7 +711,13 @@ def parse_args():
             "e.g. scene=xyz, cam=left, etc."
         ),
     )
-    parser.add_argument("--tmp_folder", type=Path, default=None)
+    parser.add_argument("--tmp_folder", type=Path, default=None, nargs="+")
+    parser.add_argument(
+        "--min_tmp_folder_space_mb",
+        type=int,
+        default=0,
+        help="Minimum free space in MB required to use a --tmp_folder candidate.",
+    )
     parser.add_argument("--lazy", action="store_true", default=False)
 
     parser.add_argument("--overwrite", action="store_true", default=False)
