@@ -240,6 +240,18 @@ def _process_video(
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 with out_path.open("w") as f:
                     json.dump(frame_data, f)
+        case ".npz", ".npz" if "{frame" in str(output_path):
+            data = dict(np.load(input_path))
+            shapes = {k: v.shape[0] for k, v in data.items()}
+            if len(set(shapes.values())) != 1:
+                raise ValueError(f"{input_path} has inconsistent timestep dims: {shapes}")
+            n_frames = next(iter(shapes.values()))
+            for i in range(n_frames):
+                frame = frame_start + i * frame_step
+                frame_data = {k: v[i] for k, v in data.items()}
+                out_path = util.format_template(output_path, {"frame": frame})
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                np.savez(out_path.with_suffix(""), **frame_data)
         case ".txt", ".npy":
             data = np.loadtxt(input_path)
             assert "{" not in str(output_path), output_path
@@ -252,6 +264,7 @@ def _process_video(
             assert output_path.exists(), f"Failed to save {output_path=}"
         case x, y if x == y:
             if not input_path.resolve() == output_path.resolve():
+                output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(input_path, output_path)
         case _:
             raise ValueError(f"Invalid {input_path.suffix=} {output_path.suffix=}")
