@@ -1,4 +1,4 @@
-__version__ = "0.0.4"
+__version__ = "0.4.0-alpha"
 
 compatibility_version = (
     1  # increment for every breaking change which affects the packed/unpacked data
