@@ -72,7 +72,7 @@ def _template_name_to_ffmpeg_format(
 
     newname = re.sub(
         r"\{frame:(0\d+)d\}",  # DONT match {framenext:06d} here because we will explictly fix this later
-        lambda m: "*" if as_glob else f"%{m.group(1)}d",
+        lambda m: "[0-9]*" if as_glob else f"%{m.group(1)}d",
         filename,
     )
 
