@@ -1,6 +1,6 @@
 [project]
 name = "cvdpack"
-version = "0.5.0-alpha"
+version = "0.5.1-alpha"
 license = {text = "BSD-3-Clause"}
 license-files = ["LICENSE"]
 description = "Quantize and video-compress your RGB/Depth/Flow/SurfaceNormal datasets"
