@@ -462,7 +462,8 @@ def pack_frameset(
 
     all_files = list(match_template_paths(input_path_template))
     if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
+        logger.warning(f"No frames found for {input_path_template}, skipping")
+        return
 
     for frame_info, frame_input_path in all_files:
         output_path = format_template(output_path_template, frame_info)
