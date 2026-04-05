@@ -146,12 +146,8 @@ def _process_video(
     job: Job,
     tmp_folder: Path,
 ):
-    has_template = "{" in str(input_path)
-    if not has_template and not input_path.exists():
+    if "{" not in str(input_path) and not input_path.exists():
         logger.warning(f"Input not found: {input_path}, skipping")
-        return
-    if has_template and len(list(util.match_template_paths(input_path))) == 0:
-        logger.warning(f"No frames found for {input_path}, skipping")
         return
 
     packer = (
