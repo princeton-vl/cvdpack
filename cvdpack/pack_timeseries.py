@@ -166,6 +166,9 @@ def pack_video(
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
     matched = list(match_template_paths(input_frames_path))
+    if len(matched) == 0:
+        logger.warning(f"No frames found for {input_frames_path}, skipping")
+        return
     matched = sorted(matched, key=lambda x: x[0]["frame"])
 
     first = load_any_image(matched[0][1])

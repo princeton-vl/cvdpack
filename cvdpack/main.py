@@ -146,6 +146,10 @@ def _process_video(
     job: Job,
     tmp_folder: Path,
 ):
+    if "{" not in str(input_path) and not input_path.exists():
+        logger.warning(f"Input not found: {input_path}, skipping")
+        return
+
     packer = (
         pack_frames.get_channel_packer(job.config.get("packing"))
         if "packing" in job.config
