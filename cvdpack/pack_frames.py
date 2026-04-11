@@ -27,6 +27,7 @@ class PackMethod(Enum):
     F32_AS_LOG_INT16 = "f32_as_log_int16"
     CHECKBOUNDS = "checkbounds"
     UNIT_SPHERE_AS_2F32_ANGLES = "3f32_unit_sphere_as_2f32_angles"
+    UNIT_SPHERE_AS_2INT16 = "3f32_unit_sphere_as_2int16"
 
     @classmethod
     def from_str(cls, s: str):
@@ -294,6 +295,29 @@ class CheckBoundsPacker(Packer):
         return img_packed.astype(self.from_dtype)
 
 
+def _cartesian_to_spherical(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert (H, W, 3) unit vectors to spherical angles. Returns (theta, phi, is_bg)."""
+    if img.ndim != 3 or img.shape[2] != 3:
+        raise ValueError(f"Expected (H, W, 3) float32, got {img.shape=}")
+    if img.dtype != np.float32:
+        raise ValueError(f"Expected float32, got {img.dtype=}")
+
+    is_bg = np.linalg.norm(img, axis=-1) < 1e-6
+    theta = np.arctan2(img[..., 1], img[..., 0]).astype(np.float32)  # [-pi, pi]
+    phi = np.arcsin(np.clip(img[..., 2], -1.0, 1.0)).astype(np.float32)  # [-pi/2, pi/2]
+    return theta, phi, is_bg
+
+
+def _spherical_to_cartesian(theta: np.ndarray, phi: np.ndarray, is_bg: np.ndarray) -> np.ndarray:
+    """Convert spherical angles back to (H, W, 3) unit vectors."""
+    x = (np.cos(phi) * np.cos(theta)).astype(np.float32)
+    y = (np.cos(phi) * np.sin(theta)).astype(np.float32)
+    z = np.sin(phi).astype(np.float32)
+    result = np.stack([x, y, z], axis=-1)
+    result[is_bg] = 0.0
+    return result
+
+
 class UnitSphereAs2F32AnglesPacker(Packer):
     """
     encodes a (H, W, 3) float32 unit-sphere field (e.g. surface normals)
@@ -307,19 +331,9 @@ class UnitSphereAs2F32AnglesPacker(Packer):
     """
 
     def pack(self, img: np.ndarray) -> np.ndarray:
-        if img.ndim != 3 or img.shape[2] != 3:
-            raise ValueError(f"Expected (H, W, 3) float32, got {img.shape=}")
-        if img.dtype != np.float32:
-            raise ValueError(f"Expected float32, got {img.dtype=}")
-
-        is_bg = np.linalg.norm(img, axis=-1) < 1e-6
-
-        theta = np.arctan2(img[..., 1], img[..., 0]).astype(np.float32)
-        phi = np.arcsin(np.clip(img[..., 2], -1.0, 1.0)).astype(np.float32)
-
+        theta, phi, is_bg = _cartesian_to_spherical(img)
         theta[is_bg] = np.nan
         phi[is_bg] = np.nan
-
         angles = np.stack([theta, phi], axis=-1)  # (H, W, 2) float32
         return np.ascontiguousarray(angles).view(np.uint16)  # (H, W, 4) uint16
 
@@ -327,18 +341,51 @@ class UnitSphereAs2F32AnglesPacker(Packer):
         if img_packed.dtype != np.uint16:
             raise ValueError(f"Expected uint16, got {img_packed.dtype=}")
         angles = np.ascontiguousarray(img_packed).view(np.float32)  # (H, W, 2) float32
-
         theta = angles[..., 0]
         phi = angles[..., 1]
         is_bg = np.isnan(theta)
+        return _spherical_to_cartesian(theta, phi, is_bg)
 
-        x = (np.cos(phi) * np.cos(theta)).astype(np.float32)
-        y = (np.cos(phi) * np.sin(theta)).astype(np.float32)
-        z = np.sin(phi).astype(np.float32)
 
-        result = np.stack([x, y, z], axis=-1)
-        result[is_bg] = 0.0
-        return result
+class UnitSphereAs2Int16Packer(Packer):
+    """
+    Encodes a (H, W, 3) float32 unit-sphere field as two uint16 channels
+    by linearly quantizing the spherical angles.
+
+    theta in [-pi, pi] and phi in [-pi/2, pi/2] are each mapped to [0, 65534].
+    Background (zero-length) vectors use uint16 max (65535) as NaN sentinel.
+
+    Uses only 2 uint16 channels (vs 4 for the f32-reinterpret variant).
+    Angular precision: pi/65534 ≈ 4.8e-5 rad.
+    """
+
+    def pack(self, img: np.ndarray) -> np.ndarray:
+        theta, phi, is_bg = _cartesian_to_spherical(img)
+        theta[is_bg] = np.nan
+        phi[is_bg] = np.nan
+
+        imax = np.iinfo(np.uint16).max
+        theta_norm = (theta + np.pi) / (2 * np.pi)
+        phi_norm = (phi + np.pi / 2) / np.pi
+
+        theta_q = _pack_to_int_with_nan_to_imax(theta_norm, np.uint16)
+        phi_q = _pack_to_int_with_nan_to_imax(phi_norm, np.uint16)
+        return np.stack([theta_q, phi_q], axis=-1)  # (H, W, 2) uint16
+
+    def unpack(self, img_packed: np.ndarray) -> np.ndarray:
+        if img_packed.dtype != np.uint16:
+            raise ValueError(f"Expected uint16, got {img_packed.dtype=}")
+
+        theta_q = img_packed[..., 0]
+        phi_q = img_packed[..., 1]
+
+        theta_norm = _unpack_from_int_with_imax_to_nan(theta_q, np.uint16)
+        phi_norm = _unpack_from_int_with_imax_to_nan(phi_q, np.uint16)
+
+        theta = (theta_norm * 2 * np.pi - np.pi).astype(np.float32)
+        phi = (phi_norm * np.pi - np.pi / 2).astype(np.float32)
+        is_bg = np.isnan(theta)
+        return _spherical_to_cartesian(theta, phi, is_bg)
 
 
 class F32AsLogInt16Packer(Packer):
@@ -432,6 +479,8 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
             )
         case PackMethod.UNIT_SPHERE_AS_2F32_ANGLES:
             return UnitSphereAs2F32AnglesPacker()
+        case PackMethod.UNIT_SPHERE_AS_2INT16:
+            return UnitSphereAs2Int16Packer()
         case _:
             raise ValueError(f"Invalid {packing_config['method']=}")
 

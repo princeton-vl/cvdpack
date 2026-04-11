@@ -100,7 +100,7 @@ wheels = [
 
 [[package]]
 name = "cvdpack"
-version = "0.2.0a0"
+version = "0.5.2a0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
