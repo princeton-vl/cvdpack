@@ -21,7 +21,9 @@ requires-python = ">3.10.0"
 dependencies = [
     "numpy<2",
     "opencv-python",
-    "tqdm"
+    "tqdm",
+    "matplotlib",
+    "imageio",
 ]
 dev = [
     "ruff",
@@ -40,7 +42,6 @@ slurm = [
 ]
 dev = [
     "ruff",
-    "matplotlib",
     "pytest"
 ]
 

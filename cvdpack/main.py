@@ -173,6 +173,22 @@ def _process_video(
                 loglevel=job.loglevel,
                 tmp_folder=tmp_folder,
             )
+        case (".npy" | ".exr"), ".mkv" if job.config.get("visualize"):
+            from cvdpack import visualize_frames
+            tmp_template = tmp_folder / "vis_{frame:06d}.png"
+            visualize_frames.visualize_frameset(input_path, tmp_template, job.gt_type)
+            pack_video(
+                tmp_template,
+                output_path,
+                frame_start=frame_start,
+                frame_step=frame_step,
+                n_cpus=job.cpus_per_worker,
+                loglevel=job.loglevel,
+                tmp_folder=tmp_folder,
+            )
+        case (".npy" | ".exr"), ".png" if job.config.get("visualize"):
+            from cvdpack import visualize_frames
+            visualize_frames.visualize_frameset(input_path, output_path, job.gt_type)
         case _, ".mkv":
             tmp_template = tmp_folder / "{frame:06d}.png"
             pack_frames.pack_frameset(
@@ -397,7 +413,7 @@ def decide_dataset_job_templates(
     output_folder: Path,
     datatype_conf: dict,
     steps: list[str] | None,
-    mode: Literal["pack", "unpack"],
+    mode: Literal["pack", "unpack", "visualize"],
 ):
     """
     By default, we always go to/from templates in the config
@@ -413,6 +429,13 @@ def decide_dataset_job_templates(
     elif mode == "unpack":
         default_src = Path(datatype_conf["packed_path_template"])
         default_dest = Path(datatype_conf["original_path_template"])
+    elif mode == "visualize":
+        from cvdpack import visualize_frames
+        orig = datatype_conf["original_path_template"]
+        packed = datatype_conf.get("packed_path_template", "")
+        vis_mkv = visualize_frames.derive_vis_mkv_template(packed)
+        default_src = Path(orig)
+        default_dest = Path(vis_mkv) if vis_mkv else Path(visualize_frames.derive_vis_png_template(orig))
     else:
         raise ValueError(f"Invalid {mode=}")
 
@@ -606,6 +629,73 @@ def unpack_dataset(
     )
 
 
+def visualize_dataset(
+    input_folder: Path,
+    output_folder: Path,
+    steps: list[str] | None,
+    config: dict | None,
+    parallel_mode: Literal["multiprocess", "slurm", "none"],
+    slurm_args: dict | None,
+    n_workers: int,
+    subset: dict | None,
+    tmp_folder: Path,
+    lazy: bool,
+    cpus_per_worker: int | None = None,
+    loglevel: int | None = None,
+):
+    if config is None:
+        raise ValueError(
+            "visualize_dataset requires a config, must use --config "
+            "or use an --input containing a cvdpack.json"
+        )
+
+    from cvdpack import visualize_frames
+
+    jobs = []
+    for gt_type, datatype_conf in config["data_types"].items():
+        if gt_type not in visualize_frames.VISUALIZATION_FUNCS:
+            continue
+
+        input_template, output_template = decide_dataset_job_templates(
+            input_folder,
+            output_folder,
+            datatype_conf,
+            steps,
+            mode="visualize",
+        )
+
+        job_defaults = dict(
+            gt_type=gt_type,
+            subset=subset,
+            tmp_folder=tmp_folder,
+            config={**datatype_conf, "visualize": True},
+            cpus_per_worker=cpus_per_worker,
+            loglevel=loglevel,
+        )
+
+        jobs.extend(
+            find_jobs(
+                input_template=input_template,
+                output_template=output_template,
+                gt_type=gt_type,
+                subset=subset,
+                job_defaults=job_defaults,
+                lazy=lazy,
+                match_video_folder=True,
+            )
+        )
+
+    execute_jobs(
+        log_folder=output_folder / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_visualize",
+        func=process_video_job,
+        jobs=jobs,
+        parallel_mode=parallel_mode,
+        n_workers=n_workers,
+        slurm_args=slurm_args,
+        cpus_per_worker=cpus_per_worker,
+    )
+
+
 def select_tmp_folder(candidates: list[Path], min_space_mb: int) -> Path:
     for candidate in candidates:
         try:
@@ -679,6 +769,7 @@ def parse_args():
             "pack",
             "unpack",
             "copy",
+            "visualize",
         ],
     )
     parser.add_argument("--input", type=Path, required=True)
@@ -905,10 +996,16 @@ def main():
             unpack_dataset(args.input, args.output, **dataset_jobprocess_kwargs)
         case "copy":
             copy_files(args.input, args.output, subset=subset, loglevel=args.loglevel)
+        case "visualize":
+            if not args.input.is_dir():
+                raise ValueError(
+                    f"visualize_dataset requires input to be a directory: {args.input=}"
+                )
+            visualize_dataset(args.input, args.output, **dataset_jobprocess_kwargs)
         case _:
             raise ValueError(f"Invalid {args.action=}")
 
-    if args.action == "copy" or config is None:
+    if args.action in {"copy", "visualize"} or config is None:
         return
 
     config["metadata"]["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
