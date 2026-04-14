@@ -92,6 +92,9 @@ def find_jobs(
         input_template, subset, return_matched=True
     )
     matched_keys.add("gt_type")
+    # Subset keys not present in this template's variables are irrelevant to it;
+    # treat them as allowed extras so they don't raise in included_in_filter.
+    matched_keys.update(subset.keys())
 
     if match_video_folder and "{frame" in input_template.parts[-1]:
         search_template = input_template.parent
