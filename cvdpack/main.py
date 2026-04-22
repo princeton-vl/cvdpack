@@ -77,6 +77,7 @@ def find_jobs(
     job_defaults: dict,
     match_video_folder: bool = False,
     lazy: bool = False,
+    missing_gt: str = "error",
 ) -> list[Job]:
     if subset is None:
         subset = {}
@@ -134,7 +135,11 @@ def find_jobs(
         jobs.append(job)
 
     if len(jobs) == 0 and skipped_for_lazy == 0:
-        raise ValueError(f"No jobs found for {input_template}")
+        if missing_gt == "error":
+            raise ValueError(f"No jobs found for {input_template}")
+        elif missing_gt == "warn":
+            logger.warning(f"No jobs found for {input_template}, skipping")
+        return jobs
     msg = f"Found {len(jobs)} jobs for {input_template} -> {output_template}"
     if skipped_for_lazy > 0:
         msg += f", skipped {skipped_for_lazy} due to --lazy flag"
@@ -496,6 +501,7 @@ def pack_dataset(
     tmp_folder: Path,
     subset: dict | None,
     lazy: bool,
+    missing_gt: str = "error",
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
 ):
@@ -533,6 +539,7 @@ def pack_dataset(
                 job_defaults=job_defaults,
                 lazy=lazy,
                 match_video_folder=True,
+                missing_gt=missing_gt,
             )
         )
 
@@ -558,6 +565,7 @@ def unpack_dataset(
     subset: dict | None,
     tmp_folder: Path,
     lazy: bool,
+    missing_gt: str = "error",
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
 ):
@@ -595,6 +603,7 @@ def unpack_dataset(
                 job_defaults=job_defaults,
                 lazy=lazy,
                 match_video_folder=True,
+                missing_gt=missing_gt,
             )
         )
 
@@ -739,6 +748,13 @@ def parse_args():
         help="Minimum free space in MB required to use a --tmp_folder candidate.",
     )
     parser.add_argument("--lazy", action="store_true", default=False)
+    parser.add_argument(
+        "--missing_gt",
+        choices=["error", "warn", "silent"],
+        default="error",
+        help="What to do when a gt_type from the config has no matching input files: "
+        "'error' (default) raises, 'warn' logs a warning and skips, 'silent' skips quietly",
+    )
 
     parser.add_argument("--overwrite", action="store_true", default=False)
     parser.add_argument(
@@ -889,6 +905,7 @@ def main():
         tmp_folder=args.tmp_folder,
         subset=subset,
         lazy=args.lazy,
+        missing_gt=args.missing_gt,
         cpus_per_worker=args.cpus_per_worker,
         loglevel=args.loglevel,
     )
