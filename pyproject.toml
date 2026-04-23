@@ -23,20 +23,14 @@ dependencies = [
     "opencv-python",
     "tqdm"
 ]
-dev = [
-    "ruff",
-]
-slurm = [
-    "submitit",
-    "setuptools", # submitit implicitly depends on pkg_resources which is no longer available in newer python versions
-]
 
 [project.scripts]
 cvdpack = "cvdpack.main:main"
 
 [project.optional-dependencies]
 slurm = [
-    "submitit"
+    "submitit",
+    "setuptools", # submitit implicitly depends on pkg_resources which is no longer available in newer python versions
 ]
 dev = [
     "ruff",
