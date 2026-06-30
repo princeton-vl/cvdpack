@@ -1,5 +1,5 @@
 ---
-name: install-setup
+name: cvdpack-install-setup
 description: Install the prerequisites for cvdpack (ffmpeg + uv), then run it via uvx with no install, or optionally install the cvdpack package for the Python API. Use this before running any other cvdpack workflow.
 ---
 

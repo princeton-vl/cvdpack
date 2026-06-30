@@ -1,5 +1,5 @@
 ---
-name: difference-checker
+name: cvdpack-difference-checker
 description: Verify a pack/unpack round trip with `python -m cvdpack.checkdiff`, comparing original vs unpacked files via input/output path templates and reporting per-file diff stats (or erroring on mismatch with --error). Use to prove packing did not corrupt data.
 ---
 

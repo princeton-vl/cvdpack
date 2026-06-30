@@ -1,5 +1,5 @@
 ---
-name: partial-pack
+name: cvdpack-partial-pack
 description: Run only part of the pack/unpack pipeline using --steps (quantize, pack_video, unpack_video, unquantize), e.g. just npy->png, png->mkv, mkv->png, or png->npy. Use to run stages in sequence, inspect intermediates, or skip ffmpeg.
 ---
 
@@ -18,7 +18,7 @@ Run individual stages of the pipeline instead of the whole thing. The four stage
 - You want to run the steps on different machines or at different times.
 
 ## Prerequisites
-ffmpeg on PATH only if you include `pack_video` or `unpack_video` (see `install-setup`).
+ffmpeg on PATH only if you include `pack_video` or `unpack_video` (see `cvdpack-install-setup`).
 
 ## Commands (run in sequence)
 ```bash

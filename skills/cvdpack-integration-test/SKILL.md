@@ -1,5 +1,5 @@
 ---
-name: integration-test
+name: cvdpack-integration-test
 description: Run the end-to-end pack/unpack regression test (integration_test.sh) that packs and unpacks one TartanAir scene with both the lossless and lossy presets, records sizes/timings, and asserts no unintended file changes via checkdiff. Use to validate a dev checkout.
 ---
 
@@ -14,7 +14,7 @@ End-to-end regression check that pack + unpack works for TartanAir with no unint
 
 ## Prerequisites
 - A dev checkout (`integration_test.sh` lives at repo root; uses `uv run`).
-- ffmpeg on PATH (see `install-setup`).
+- ffmpeg on PATH (see `cvdpack-install-setup`).
 - The TartanAir scene under `data/TartanAir/abandonedfactory/Hard/P000/`.
 - GNU `time` at `/usr/bin/time` and `du` supporting `--max-depth` (GNU coreutils).
 

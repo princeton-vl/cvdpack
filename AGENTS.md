@@ -28,12 +28,12 @@ this SKILL.md + AGENTS.md pairing.
 ## Skill index
 | Skill | When to use | Path |
 |-------|-------------|------|
-| install-setup | First, on a fresh machine / CI: install ffmpeg + uv, run via `uvx`, optionally install the package. | `skills/install-setup/SKILL.md` |
-| pack-unpack-quantized | Lossy, maximum compression (~84%) with libx265 + uint16 quantization (`tartanair_quantized.json`). | `skills/pack-unpack-quantized/SKILL.md` |
-| pack-unpack-lossless | Zero intended changes (~48%) with the floating-point preset (`tartanair_floatingpoint.json`). | `skills/pack-unpack-lossless/SKILL.md` |
-| reorganize-dataset | Restructure a dataset's layout with `cvdpack copy` and path templates. | `skills/reorganize-dataset/SKILL.md` |
-| extract-subset | Pull out a filtered slice with `cvdpack copy --subset`. | `skills/extract-subset/SKILL.md` |
-| partial-pack | Run individual pipeline stages via `--steps quantize/pack_video/unpack_video/unquantize`. | `skills/partial-pack/SKILL.md` |
-| slurm-pack | Massively parallel pack/unpack on a SLURM cluster via `--parallel_mode slurm`. | `skills/slurm-pack/SKILL.md` |
-| difference-checker | Verify a round trip with `python -m cvdpack.checkdiff`. | `skills/difference-checker/SKILL.md` |
-| integration-test | Run the end-to-end regression test `integration_test.sh`. | `skills/integration-test/SKILL.md` |
+| cvdpack-install-setup | First, on a fresh machine / CI: install ffmpeg + uv, run via `uvx`, optionally install the package. | `skills/cvdpack-install-setup/SKILL.md` |
+| cvdpack-pack-unpack-quantized | Lossy, maximum compression (~84%) with libx265 + uint16 quantization (`tartanair_quantized.json`). | `skills/cvdpack-pack-unpack-quantized/SKILL.md` |
+| cvdpack-pack-unpack-lossless | Zero intended changes (~48%) with the floating-point preset (`tartanair_floatingpoint.json`). | `skills/cvdpack-pack-unpack-lossless/SKILL.md` |
+| cvdpack-reorganize-dataset | Restructure a dataset's layout with `cvdpack copy` and path templates. | `skills/cvdpack-reorganize-dataset/SKILL.md` |
+| cvdpack-extract-subset | Pull out a filtered slice with `cvdpack copy --subset`. | `skills/cvdpack-extract-subset/SKILL.md` |
+| cvdpack-partial-pack | Run individual pipeline stages via `--steps quantize/pack_video/unpack_video/unquantize`. | `skills/cvdpack-partial-pack/SKILL.md` |
+| cvdpack-slurm-pack | Massively parallel pack/unpack on a SLURM cluster via `--parallel_mode slurm`. | `skills/cvdpack-slurm-pack/SKILL.md` |
+| cvdpack-difference-checker | Verify a round trip with `python -m cvdpack.checkdiff`. | `skills/cvdpack-difference-checker/SKILL.md` |
+| cvdpack-integration-test | Run the end-to-end regression test `integration_test.sh`. | `skills/cvdpack-integration-test/SKILL.md` |

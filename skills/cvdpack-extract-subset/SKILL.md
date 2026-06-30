@@ -1,5 +1,5 @@
 ---
-name: extract-subset
+name: cvdpack-extract-subset
 description: Extract a filtered subset of a dataset with `cvdpack copy --subset`, selecting specific scenes/splits/vids/gt_types/cameras via key=value (comma-separated) filters. Use to pull out just part of a dataset.
 ---
 

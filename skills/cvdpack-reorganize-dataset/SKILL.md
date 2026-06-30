@@ -1,5 +1,5 @@
 ---
-name: reorganize-dataset
+name: cvdpack-reorganize-dataset
 description: Reorganize a dataset's directory/file layout with `cvdpack copy`, remapping paths via input/output templates with placeholders like {scene}/{split}/{vid}/{cam}/{gt_type}/{frame}. Use to restructure a dataset without packing or compression.
 ---
 
@@ -32,4 +32,4 @@ Files copied into the new layout. No `cvdpack.json` is written for `copy`.
 
 ## Caveats
 - `--n_workers` / `--parallel_mode` do NOT work with `copy` (it errors); copy is single-process.
-- Some layouts that store multiple gt types in one folder (e.g. TartanAir flow + mask) can be hard to express in one template; see the `extract-subset` skill for filtering.
+- Some layouts that store multiple gt types in one folder (e.g. TartanAir flow + mask) can be hard to express in one template; see the `cvdpack-extract-subset` skill for filtering.

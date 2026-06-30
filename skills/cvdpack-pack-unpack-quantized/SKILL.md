@@ -1,5 +1,5 @@
 ---
-name: pack-unpack-quantized
+name: cvdpack-pack-unpack-quantized
 description: Pack and unpack a TartanAir dataset with the lossy quantized preset (tartanair_quantized.json) using libx265 / h265 video and uint16 quantization for maximum compression (~84% savings). Use when storage savings matter more than exact ground-truth fidelity.
 ---
 
@@ -10,10 +10,10 @@ Maximum compression of an RGB/Depth/Flow/Seg dataset using quantization to uint1
 
 ## When to use
 - You want the smallest possible packed dataset and can tolerate small, known, bounded changes to the ground truth and RGB.
-- NOT for results that require bit-exact ground truth; use the lossless `pack-unpack-lossless` skill instead.
+- NOT for results that require bit-exact ground truth; use the lossless `cvdpack-pack-unpack-lossless` skill instead.
 
 ## Prerequisites
-ffmpeg on PATH (see `install-setup`). For libx265 you may need `sudo apt install libx265-dev`.
+ffmpeg on PATH (see `cvdpack-install-setup`). For libx265 you may need `sudo apt install libx265-dev`.
 
 ## Commands
 Single scene + video shown; remove `--subset` to do the whole dataset.
@@ -42,4 +42,4 @@ uvx cvdpack unpack \
 - Industry users may need a libx265 license to unpack. libx265 is slow to encode (fast to decode).
 - `--tmp_folder` is OPTIONAL (defaults to a system temp dir) but recommended for large jobs.
 - Tune dynamic range vs precision, and per-channel uint16/float16/float32 choices, in the JSON config.
-- Verify a round-trip with the `difference-checker` skill (use `--atol 0.01` for the lossy flow check).
+- Verify a round-trip with the `cvdpack-difference-checker` skill (use `--atol 0.01` for the lossy flow check).

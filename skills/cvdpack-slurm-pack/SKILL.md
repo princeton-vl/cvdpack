@@ -1,5 +1,5 @@
 ---
-name: slurm-pack
+name: cvdpack-slurm-pack
 description: Pack/unpack a large dataset massively in parallel on a SLURM cluster via --parallel_mode slurm with submitit, including lossless and lossy variants. Use for full-dataset jobs too big for a single machine.
 ---
 

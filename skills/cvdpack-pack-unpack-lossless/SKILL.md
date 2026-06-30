@@ -1,5 +1,5 @@
 ---
-name: pack-unpack-lossless
+name: cvdpack-pack-unpack-lossless
 description: Pack and unpack a TartanAir dataset with the lossless floating-point preset (tartanair_floatingpoint.json), with zero intended changes to images or ground truth (~48% savings). Use when exact fidelity matters. This path is WIP and less space-efficient.
 ---
 
@@ -13,7 +13,7 @@ Reorganize and compress a dataset with zero intended changes to images or ground
 - You accept modest savings (~48%) in exchange for fidelity.
 
 ## Prerequisites
-ffmpeg on PATH (see `install-setup`).
+ffmpeg on PATH (see `cvdpack-install-setup`).
 
 ## Commands
 Single scene + video shown; remove `--subset` to do the whole dataset.
@@ -38,4 +38,4 @@ uvx cvdpack unpack \
 ## Caveats
 - This setting is WIP and not very space-efficient. Float32 is currently reinterpret-cast to uint16 video, producing stripey patterns that compress poorly; video compression may add little over plain PNGs here.
 - `--tmp_folder` is OPTIONAL (defaults to a system temp dir) but recommended for large jobs.
-- Verify a round-trip with the `difference-checker` skill (default `--atol`, expect zero diff).
+- Verify a round-trip with the `cvdpack-difference-checker` skill (default `--atol`, expect zero diff).
