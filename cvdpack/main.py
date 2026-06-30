@@ -669,6 +669,10 @@ def validate_args(args: argparse.Namespace):
             f"Set {util.ENVIRON_KEYS['array_max']} to a larger value if this is appropriate forr your cluster"
         )
 
+    if args.tmp_folder is None and args.action in ("pack", "unpack"):
+        args.tmp_folder = [Path(tempfile.gettempdir()) / "cvdpack_tmp"]
+        logger.info(f"No --tmp_folder given, defaulting to {args.tmp_folder}")
+
     if args.tmp_folder is not None:
         args.tmp_folder = select_tmp_folder(args.tmp_folder, args.min_tmp_folder_space_mb)
 
@@ -814,7 +818,7 @@ def copy_files(
     input_files = [
         (tvals, path)
         for tvals, path in util.match_template_paths(input_template)
-        if util.included_in_filter(tvals, subset)
+        if not subset or util.included_in_filter(tvals, subset)
     ]
 
     if len(input_files) == 0:
@@ -869,14 +873,16 @@ def main():
     if config_path is None:
         config_path = args.input / "cvdpack.json"
 
-    if args.action == "copy" and not config_path.exists():
-        config = None
-    else:
+    config = None
+    config_version = None
+    if not (args.action == "copy" and not config_path.exists()):
         with config_path.open("r") as f:
             config = json.load(f)
         config_version = config.get("metadata", {}).get("cvdpack_version")
 
-    compat_version = config.get("metadata", {}).get("compatibility_version", None)
+    compat_version = None
+    if config is not None:
+        compat_version = config.get("metadata", {}).get("compatibility_version", None)
     if compat_version is not None and compat_version != compatibility_version:
         raise ValueError(
             f"Config {config_path} had compatibility version {compat_version} cvdpack=={config_version}"

@@ -35,7 +35,7 @@ Add `-v` or `-d` to see more output. See `uvx cvdpack --help` for all options.
 #### Pack/unpack one scene of tartanair locally with quantization, h265 encoding, and small RGB changes
 
 ```bash
-CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_quantized.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
+CVDPACK_MINOR_VIDEO_ERROR=1 uvx cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed/ --config presets/tartanair_quantized.json --tmp_folder data/tmp/ --n_workers 10 --subset scene=abandonedfactory vid=P000 -v
 uvx cvdpack unpack --input data/TartanAir_packed --output data/TartanAir_unpacked --n_workers 10 --tmp_folder data/tmp/ --subset scene=abandonedfactory vid=P000 -v
 ```
 Runtime for one scene is approx 54sec and 46sec respectively with 10 workers on an AMD EPYC 7713P.
@@ -44,7 +44,7 @@ Filesizes are approx 8.6GB for raw TartanAir vs 1.3GB for packed version (84% sa
 This config has the best compression but has SIGNIFICANT COMPROMISES on quality:
 - presets/tartanair_quantized.json will clip ground truth to certain min/max values, which will appear as nan when unpacked
 - presets/tartanair_quantized.json will store intermediate data as uint16. This means flow has ~0.01px precision, depth has variable precision (very large error at 500m+)
-- CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 allows libx265 with yuv444p pixels - will mean small fraction of pixel values change by +=1 or +=2.
+- CVDPACK_MINOR_VIDEO_ERROR=1 allows libx265 with yuv444p pixels - will mean small fraction of pixel values change by +=1 or +=2.
 - Industry users may require a license for libx265 to unpack the data
 - libx265 is (supposedly) slow to encode (albeit faster to decode)
 
@@ -81,16 +81,16 @@ All commands will assume packing via multiprocessing, but we recommend using a s
 #### Pack/unpack TartanAir with zero intended image/gt changes
 
 ```bash
-screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floatingpoint.json --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floatingpoint.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 
-screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
 #### Pack TartanAir with a minimal known gt changes
 
 ```bash
 sudo apt install libx265-dev
-CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_quantized.json --tmp_folder /scratch/$USER/uvx cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
+CVDPACK_MINOR_VIDEO_ERROR=1 uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_quantized.json --tmp_folder /scratch/$USER/cvdpack_tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=pvl slurm_nodelist=node007,node[020-026],node[101-104],node403
 ```
 
 Unpacked command is unchanged. See warnings above RE losses and accessibility of the data.
@@ -115,10 +115,10 @@ These commands allow massively parallel packing/unpacking on a SLURM cluster. Th
 
 ```bash
 #lossless encode
-CVDPACK_MINOR_VIDEO_ERROR_CODECS=0 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floatingpoint.json --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs -v
+CVDPACK_MINOR_VIDEO_ERROR=0 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_floatingpoint.json --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs -v
 
 #lossy encode
-CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_quantized.json --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs -v
+CVDPACK_MINOR_VIDEO_ERROR=1 screen uvx cvdpack pack --input /n/fs/circuitnn/datasets/TartanAir --output /n/fs/scratch/$USER/data/TartanAir_packed --config presets/tartanair_quantized.json --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs -v
 
 screen uvx cvdpack unpack --input /n/fs/scratch/$USER/data/TartanAir_packed --output /n/fs/scratch/$USER/data/TartanAir_unpacked --tmp_folder /n/fs/scratch/$USER/tmp/ --parallel_mode slurm --n_workers 200 --slurm_args slurm_account=allcs
 ```
@@ -159,20 +159,20 @@ uv run pytest tests/
 Run tartanair pack and unpack, then choose one:
 
 ```bash
-# all of TartanAir, except flow, that one uses a different template :/
-uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}.{ext} --output data/TartanAir_unpacked/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}_{gt_type}.{ext}
+# TartanAir rgb images (image has no gt_type suffix in the filename)
+uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/image_{cam}/{frame:06d}_{cam}.{ext} --output data/TartanAir_unpacked/{scene}/{split}/{vid}/image_{cam}/{frame:06d}_{cam}.{ext} --error
 
-# TartanAir, all depth
-uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}__{cam}.{ext} --output data/TartanAir_unpacked/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{frame:06d}_{gt_type}.{ext} --subset gt_type=depth
+# TartanAir, all depth + seg (the gt types whose filename ends in _{gt_type})
+uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}_{gt_type}.{ext} --output data/TartanAir_unpacked/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{cam}_{gt_type}.{ext} --error
 
-# TartanAir, all flow images
-uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}__{cam}.{ext} --output data/TartanAir_unpacked/{scene}/{split}/{vid}/{gt_type}_{cam}/{frame:06d}_{frame:06d}_{gt_type}.{ext} --subset gt_type=flow
+# TartanAir, all flow (flow uses frame->framenext in its filename, and a flow/ folder with no _cam)
+uv run -m cvdpack.checkdiff --input data/TartanAir/{scene}/{split}/{vid}/flow/{frame:06d}_{f2:06d}_flow.npy --output data/TartanAir_unpacked/{scene}/{split}/{vid}/flow/{frame:06d}_{f2:06d}_flow.npy --error
 
 # TartanAir, single depth image
 uv run -m cvdpack.checkdiff --input data/TartanAir/abandonedfactory/Hard/P000/depth_left/000000_left_depth.npy --output data/TartanAir_unpacked/abandonedfactory/Hard/P000/depth_left/000000_left_depth.npy
 
 # TartanAir, single flow image
-uv run -m cvdpack.checkdiff --input data/TartanAir/abandonedfactory/Hard/P000/flow_left/000000_000001_flow.npy --output data/TartanAir_unpacked/abandonedfactory/Hard/P000/flow_left/000000_000001_flow.npy
+uv run -m cvdpack.checkdiff --input data/TartanAir/abandonedfactory/Hard/P000/flow/000000_000001_flow.npy --output data/TartanAir_unpacked/abandonedfactory/Hard/P000/flow/000000_000001_flow.npy
 
 
 ```

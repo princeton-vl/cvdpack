@@ -16,7 +16,7 @@ uv run -m cvdpack.checkdiff --input data/TartanAir/abandonedfactory/Hard/P000/fl
 
 # LOSSY
 
-CVDPACK_MINOR_VIDEO_ERROR_CODECS=1 /usr/bin/time -o data/time_pack_lossy.txt uv run cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed_lossy/ --config presets/tartanair_quantized.json --tmp_folder data/integration_test_tmp2/ --n_workers 10 --subset scene=abandonedfactory vid=P000
+CVDPACK_MINOR_VIDEO_ERROR=1 /usr/bin/time -o data/time_pack_lossy.txt uv run cvdpack pack --input data/TartanAir/ --output data/TartanAir_packed_lossy/ --config presets/tartanair_quantized.json --tmp_folder data/integration_test_tmp2/ --n_workers 10 --subset scene=abandonedfactory vid=P000
 /usr/bin/time -o data/time_unpack_lossy.txt uv run cvdpack unpack --input data/TartanAir_packed_lossy --output data/TartanAir_unpacked_lossy --n_workers 10 --tmp_folder data/integration_test_tmp4/ --subset scene=abandonedfactory vid=P000
 
 du -h --max-depth 4 data/TartanAir_packed_lossy/ > data/size_packed_lossy.txt
