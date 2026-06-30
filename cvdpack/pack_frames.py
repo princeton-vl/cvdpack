@@ -24,7 +24,10 @@ class PackMethod(Enum):
     INV = "inv"
     F32_AS_2INT16 = "f32_as_2int16"
     F16_AS_INT16 = "f16_as_int16"
+    F32_AS_LOG_INT16 = "f32_as_log_int16"
     CHECKBOUNDS = "checkbounds"
+    UNIT_SPHERE_AS_2F32_ANGLES = "3f32_unit_sphere_as_2f32_angles"
+    UNIT_SPHERE_AS_2INT16 = "3f32_unit_sphere_as_2int16"
 
     @classmethod
     def from_str(cls, s: str):
@@ -292,6 +295,136 @@ class CheckBoundsPacker(Packer):
         return img_packed.astype(self.from_dtype)
 
 
+def _cartesian_to_spherical(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert (H, W, 3) unit vectors to spherical angles. Returns (theta, phi, is_bg)."""
+    if img.ndim != 3 or img.shape[2] != 3:
+        raise ValueError(f"Expected (H, W, 3) float32, got {img.shape=}")
+    if img.dtype != np.float32:
+        raise ValueError(f"Expected float32, got {img.dtype=}")
+
+    is_bg = np.linalg.norm(img, axis=-1) < 1e-6
+    theta = np.arctan2(img[..., 1], img[..., 0]).astype(np.float32)  # [-pi, pi]
+    phi = np.arcsin(np.clip(img[..., 2], -1.0, 1.0)).astype(np.float32)  # [-pi/2, pi/2]
+    return theta, phi, is_bg
+
+
+def _spherical_to_cartesian(theta: np.ndarray, phi: np.ndarray, is_bg: np.ndarray) -> np.ndarray:
+    """Convert spherical angles back to (H, W, 3) unit vectors."""
+    x = (np.cos(phi) * np.cos(theta)).astype(np.float32)
+    y = (np.cos(phi) * np.sin(theta)).astype(np.float32)
+    z = np.sin(phi).astype(np.float32)
+    result = np.stack([x, y, z], axis=-1)
+    result[is_bg] = 0.0
+    return result
+
+
+class UnitSphereAs2F32AnglesPacker(Packer):
+    """
+    encodes a (H, W, 3) float32 unit-sphere field (e.g. surface normals)
+    as two float32 spherical angles, then reinterprets as 4×uint16 for video storage.
+
+    theta = atan2(y, x)  in [-pi, pi]
+    phi   = asin(z)      in [-pi/2, pi/2]
+
+    Zero vectors (background pixels) are stored as NaN and restored to zero on unpack.
+    Round-trip error is at float32 trig precision (~1e-7).
+    """
+
+    def pack(self, img: np.ndarray) -> np.ndarray:
+        theta, phi, is_bg = _cartesian_to_spherical(img)
+        theta[is_bg] = np.nan
+        phi[is_bg] = np.nan
+        angles = np.stack([theta, phi], axis=-1)  # (H, W, 2) float32
+        return np.ascontiguousarray(angles).view(np.uint16)  # (H, W, 4) uint16
+
+    def unpack(self, img_packed: np.ndarray) -> np.ndarray:
+        if img_packed.dtype != np.uint16:
+            raise ValueError(f"Expected uint16, got {img_packed.dtype=}")
+        angles = np.ascontiguousarray(img_packed).view(np.float32)  # (H, W, 2) float32
+        theta = angles[..., 0]
+        phi = angles[..., 1]
+        is_bg = np.isnan(theta)
+        return _spherical_to_cartesian(theta, phi, is_bg)
+
+
+class UnitSphereAs2Int16Packer(Packer):
+    """
+    Encodes a (H, W, 3) float32 unit-sphere field as two uint16 channels
+    by linearly quantizing the spherical angles.
+
+    theta in [-pi, pi] and phi in [-pi/2, pi/2] are each mapped to [0, 65534].
+    Background (zero-length) vectors use uint16 max (65535) as NaN sentinel.
+
+    Uses only 2 uint16 channels (vs 4 for the f32-reinterpret variant).
+    Angular precision: pi/65534 ≈ 4.8e-5 rad.
+    """
+
+    def pack(self, img: np.ndarray) -> np.ndarray:
+        theta, phi, is_bg = _cartesian_to_spherical(img)
+        theta[is_bg] = np.nan
+        phi[is_bg] = np.nan
+
+        imax = np.iinfo(np.uint16).max
+        theta_norm = (theta + np.pi) / (2 * np.pi)
+        phi_norm = (phi + np.pi / 2) / np.pi
+
+        theta_q = _pack_to_int_with_nan_to_imax(theta_norm, np.uint16)
+        phi_q = _pack_to_int_with_nan_to_imax(phi_norm, np.uint16)
+        return np.stack([theta_q, phi_q], axis=-1)  # (H, W, 2) uint16
+
+    def unpack(self, img_packed: np.ndarray) -> np.ndarray:
+        if img_packed.dtype != np.uint16:
+            raise ValueError(f"Expected uint16, got {img_packed.dtype=}")
+
+        theta_q = img_packed[..., 0]
+        phi_q = img_packed[..., 1]
+
+        theta_norm = _unpack_from_int_with_imax_to_nan(theta_q, np.uint16)
+        phi_norm = _unpack_from_int_with_imax_to_nan(phi_q, np.uint16)
+
+        theta = (theta_norm * 2 * np.pi - np.pi).astype(np.float32)
+        phi = (phi_norm * np.pi - np.pi / 2).astype(np.float32)
+        is_bg = np.isnan(theta)
+        return _spherical_to_cartesian(theta, phi, is_bg)
+
+
+class F32AsLogInt16Packer(Packer):
+    """
+    Encodes a positive float32 channel as a single uint16 using log-uniform quantization.
+
+    Relative precision is constant at all depths: error ≈ value * log(max/min) / 65534.
+    NaN is encoded as uint16 max (65535), matching the convention of LinearQuantizeIntPacker.
+
+    With min_orig_val=0.05, max_orig_val=5633 the bin size is ~0.18mm at 1m and ~1m at 5km.
+    """
+
+    def __init__(
+        self,
+        min_orig_val: float,
+        max_orig_val: float,
+        out_of_bounds_method: Literal["nan", "nan_warn", "error"] = "nan_warn",
+    ):
+        assert min_orig_val > 0, min_orig_val
+        self.min_orig_val = min_orig_val
+        self.max_orig_val = max_orig_val
+        self.log_min = np.log(min_orig_val)
+        self.log_max = np.log(max_orig_val)
+        self.out_of_bounds_method = out_of_bounds_method
+
+    def pack(self, img: np.ndarray) -> np.ndarray:
+        img = _oob_to_nan_or_error(
+            img, self.min_orig_val, self.max_orig_val, self.out_of_bounds_method
+        )
+        log_img = np.log(img.astype(np.float64))
+        img_norm = (log_img - self.log_min) / (self.log_max - self.log_min)
+        return _pack_to_int_with_nan_to_imax(img_norm, np.uint16)
+
+    def unpack(self, img_packed: np.ndarray) -> np.ndarray:
+        img_norm = _unpack_from_int_with_imax_to_nan(img_packed, np.uint16)
+        log_img = img_norm * (self.log_max - self.log_min) + self.log_min
+        return np.exp(log_img).astype(np.float32)
+
+
 def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
     min_orig_val = packing_config.get("min_orig_val", None)
     max_orig_val = packing_config.get("max_orig_val", None)
@@ -331,6 +464,12 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
                 scalar=packing_config.get("scalar", 1.0),
                 out_of_bounds_method=out_of_bounds_method,
             )
+        case PackMethod.F32_AS_LOG_INT16:
+            return F32AsLogInt16Packer(
+                min_orig_val=min_orig_val,
+                max_orig_val=max_orig_val,
+                out_of_bounds_method=out_of_bounds_method or "nan_warn",
+            )
         case PackMethod.CHECKBOUNDS:
             return CheckBoundsPacker(
                 min_orig_val=min_orig_val,
@@ -338,6 +477,10 @@ def get_channel_packer(packing_config: dict[str, Any]) -> Packer:
                 to_dtype=to_dtype,
                 from_dtype=from_dtype,
             )
+        case PackMethod.UNIT_SPHERE_AS_2F32_ANGLES:
+            return UnitSphereAs2F32AnglesPacker()
+        case PackMethod.UNIT_SPHERE_AS_2INT16:
+            return UnitSphereAs2Int16Packer()
         case _:
             raise ValueError(f"Invalid {packing_config['method']=}")
 
@@ -368,7 +511,8 @@ def pack_frameset(
 
     all_files = list(match_template_paths(input_path_template))
     if len(all_files) == 0:
-        raise ValueError(f"No frames found in {input_path_template=}")
+        logger.warning(f"No frames found for {input_path_template}, skipping")
+        return
 
     for frame_info, frame_input_path in all_files:
         output_path = format_template(output_path_template, frame_info)

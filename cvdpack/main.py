@@ -14,7 +14,8 @@ import os
 import shutil
 import subprocess
 import time
-import random
+import tempfile
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -76,6 +77,7 @@ def find_jobs(
     job_defaults: dict,
     match_video_folder: bool = False,
     lazy: bool = False,
+    missing_gt: str = "error",
 ) -> list[Job]:
     if subset is None:
         subset = {}
@@ -91,6 +93,9 @@ def find_jobs(
         input_template, subset, return_matched=True
     )
     matched_keys.add("gt_type")
+    # Subset keys not present in this template's variables are irrelevant to it;
+    # treat them as allowed extras so they don't raise in included_in_filter.
+    matched_keys.update(subset.keys())
 
     if match_video_folder and "{frame" in input_template.parts[-1]:
         search_template = input_template.parent
@@ -100,6 +105,8 @@ def find_jobs(
         input_template_extra = None
 
     paths = list(util.match_template_paths(search_template))
+    if input_template_extra:
+        paths = [(info, p) for info, p in paths if p.is_dir()]
 
     skipped_for_lazy = 0
     jobs = []
@@ -128,7 +135,11 @@ def find_jobs(
         jobs.append(job)
 
     if len(jobs) == 0 and skipped_for_lazy == 0:
-        raise ValueError(f"No jobs found for {input_template}")
+        if missing_gt == "error":
+            raise ValueError(f"No jobs found for {input_template}")
+        elif missing_gt == "warn":
+            logger.warning(f"No jobs found for {input_template}, skipping")
+        return jobs
     msg = f"Found {len(jobs)} jobs for {input_template} -> {output_template}"
     if skipped_for_lazy > 0:
         msg += f", skipped {skipped_for_lazy} due to --lazy flag"
@@ -143,6 +154,10 @@ def _process_video(
     job: Job,
     tmp_folder: Path,
 ):
+    if "{" not in str(input_path) and not input_path.exists():
+        logger.warning(f"Input not found: {input_path}, skipping")
+        return
+
     packer = (
         pack_frames.get_channel_packer(job.config.get("packing"))
         if "packing" in job.config
@@ -152,7 +167,10 @@ def _process_video(
     frame_start = job.config.get("frame_start", 0)
     frame_step = job.config.get("frame_step", 1)
 
-    match input_path.suffix, output_path.suffix:
+    def _eff_suffix(p: Path) -> str:
+        return ".tar.gz" if p.name.endswith(".tar.gz") else p.suffix
+
+    match _eff_suffix(input_path), _eff_suffix(output_path):
         case ".png", ".mkv":
             pack_video(
                 input_path,
@@ -221,6 +239,31 @@ def _process_video(
             )
         case ".tar.gz", _:
             unpack_tarball(input_path, output_path)
+        case ".npz", ".json" if "{frame" in str(output_path):
+            data = dict(np.load(input_path))
+            shapes = {k: v.shape[0] for k, v in data.items()}
+            if len(set(shapes.values())) != 1:
+                raise ValueError(f"{input_path} has inconsistent timestep dims: {shapes}")
+            n_frames = next(iter(shapes.values()))
+            for i in range(n_frames):
+                frame = frame_start + i * frame_step
+                frame_data = {k: v[i].tolist() for k, v in data.items()}
+                out_path = util.format_template(output_path, {"frame": frame})
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                with out_path.open("w") as f:
+                    json.dump(frame_data, f)
+        case ".npz", ".npz" if "{frame" in str(output_path):
+            data = dict(np.load(input_path))
+            shapes = {k: v.shape[0] for k, v in data.items()}
+            if len(set(shapes.values())) != 1:
+                raise ValueError(f"{input_path} has inconsistent timestep dims: {shapes}")
+            n_frames = next(iter(shapes.values()))
+            for i in range(n_frames):
+                frame = frame_start + i * frame_step
+                frame_data = {k: v[i] for k, v in data.items()}
+                out_path = util.format_template(output_path, {"frame": frame})
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                np.savez(out_path.with_suffix(""), **frame_data)
         case ".txt", ".npy":
             data = np.loadtxt(input_path)
             assert "{" not in str(output_path), output_path
@@ -232,7 +275,9 @@ def _process_video(
             np.savetxt(output_path, data)
             assert output_path.exists(), f"Failed to save {output_path=}"
         case x, y if x == y:
-            shutil.copy(input_path, output_path)
+            if not input_path.resolve() == output_path.resolve():
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(input_path, output_path)
         case _:
             raise ValueError(f"Invalid {input_path.suffix=} {output_path.suffix=}")
 
@@ -456,6 +501,7 @@ def pack_dataset(
     tmp_folder: Path,
     subset: dict | None,
     lazy: bool,
+    missing_gt: str = "error",
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
 ):
@@ -493,11 +539,12 @@ def pack_dataset(
                 job_defaults=job_defaults,
                 lazy=lazy,
                 match_video_folder=True,
+                missing_gt=missing_gt,
             )
         )
 
     execute_jobs(
-        log_folder=output_folder / "logs",
+        log_folder=output_folder / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_pack",
         func=process_video_job,
         jobs=jobs,
         parallel_mode=parallel_mode,
@@ -518,6 +565,7 @@ def unpack_dataset(
     subset: dict | None,
     tmp_folder: Path,
     lazy: bool,
+    missing_gt: str = "error",
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
 ):
@@ -555,17 +603,39 @@ def unpack_dataset(
                 job_defaults=job_defaults,
                 lazy=lazy,
                 match_video_folder=True,
+                missing_gt=missing_gt,
             )
         )
 
     execute_jobs(
-        log_folder=output_folder / "logs",
+        log_folder=output_folder / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_unpack",
         func=process_video_job,
         jobs=jobs,
         parallel_mode=parallel_mode,
         n_workers=n_workers,
         slurm_args=slurm_args,
         cpus_per_worker=cpus_per_worker,
+    )
+
+
+def select_tmp_folder(candidates: list[Path], min_space_mb: int) -> Path:
+    for candidate in candidates:
+        try:
+            root = candidate
+            while not root.exists():
+                root = root.parent
+            free_mb = shutil.disk_usage(root).free // (1024 * 1024)
+            if free_mb < min_space_mb:
+                logger.info(f"Skipping {candidate}: only {free_mb}MB free, need {min_space_mb}MB")
+                continue
+            candidate.mkdir(parents=True, exist_ok=True)
+            return Path(tempfile.mkdtemp(dir=candidate))
+        except OSError as e:
+            logger.info(f"Skipping {candidate}: {e}")
+            continue
+    raise RuntimeError(
+        f"No usable tmp_folder found among candidates {candidates} "
+        f"(need {min_space_mb}MB free and write access)"
     )
 
 
@@ -600,11 +670,7 @@ def validate_args(args: argparse.Namespace):
         )
 
     if args.tmp_folder is not None:
-        args.tmp_folder = args.tmp_folder / f"tmp_{random.randint(0, 10000)}"
-        if args.tmp_folder.exists():
-            raise FileExistsError(
-                f"Temporary folder {args.tmp_folder=} already exists, please delete it or use a different --tmp_folder"
-            )
+        args.tmp_folder = select_tmp_folder(args.tmp_folder, args.min_tmp_folder_space_mb)
 
     return args
 
@@ -674,8 +740,21 @@ def parse_args():
             "e.g. scene=xyz, cam=left, etc."
         ),
     )
-    parser.add_argument("--tmp_folder", type=Path, default=None)
+    parser.add_argument("--tmp_folder", type=Path, default=None, nargs="+")
+    parser.add_argument(
+        "--min_tmp_folder_space_mb",
+        type=int,
+        default=0,
+        help="Minimum free space in MB required to use a --tmp_folder candidate.",
+    )
     parser.add_argument("--lazy", action="store_true", default=False)
+    parser.add_argument(
+        "--missing_gt",
+        choices=["error", "warn", "silent"],
+        default="error",
+        help="What to do when a gt_type from the config has no matching input files: "
+        "'error' (default) raises, 'warn' logs a warning and skips, 'silent' skips quietly",
+    )
 
     parser.add_argument("--overwrite", action="store_true", default=False)
     parser.add_argument(
@@ -763,7 +842,8 @@ def copy_files(
         output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.debug(f"Copying {input_file_path} -> {output_file_path}")
-        shutil.copy(input_file_path, output_file_path)
+        if not input_file_path.resolve() == output_file_path.resolve():
+            shutil.copy(input_file_path, output_file_path)
 
 
 def format_for_json(obj):
@@ -825,6 +905,7 @@ def main():
         tmp_folder=args.tmp_folder,
         subset=subset,
         lazy=args.lazy,
+        missing_gt=args.missing_gt,
         cpus_per_worker=args.cpus_per_worker,
         loglevel=args.loglevel,
     )

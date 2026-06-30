@@ -1,4 +1,4 @@
-__version__ = "0.0.4"
+__version__ = "0.5.1-alpha"
 
 compatibility_version = (
     1  # increment for every breaking change which affects the packed/unpacked data
@@ -19,6 +19,8 @@ from .pack_frames import (
     InvQuantizeInt16Packer,
     F32As2Int16ReinterpretPacker,
     F16ToInt16ReinterpretPacker,
+    UnitSphereAs2F32AnglesPacker,
+    UnitSphereAs2Int16Packer,
 )
 
 from .pack_timeseries import pack_video, unpack_video
@@ -34,6 +36,8 @@ __all__ = [
     "InvQuantizeInt16Packer",
     "F32As2Int16ReinterpretPacker",
     "F16ToInt16ReinterpretPacker",
+    "UnitSphereAs2F32AnglesPacker",
+    "UnitSphereAs2Int16Packer",
     "pack_video",
     "unpack_video",
     "Job",

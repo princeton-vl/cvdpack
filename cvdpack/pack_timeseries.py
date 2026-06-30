@@ -37,17 +37,17 @@ ALLOW_LOSSY_RGB_ENCODE = (
 
 PROPS_TO_ENCODER_PIXFMT = {
     ("uint8", 1): ("ffv1", "gray"),  # used for binary masks or <256 segmentation labels
-    ("uint8", 3): ("ffv1", "rgb24")
-    if not ALLOW_LOSSY_RGB_ENCODE
-    else ("libx265", "yuv444p"),  # used for rgb video or sometimes normals
+    ("uint8", 3): ("ffv1", "rgb24"),  # used for rgb video or sometimes normals
+    ("uint8", 4): ("ffv1", "rgb24"),  # alpha channel is dropped; assumes alpha=1 everywhere
     ("uint16", 1): ("ffv1", "gray16le"),  # used for 1channel GT e.g. quantized depth
     # NOTE: I investigated specifying endianness e.g. rgb48le rgb48be when packing floats, but it doesnt seem to matter. Neither does explicitly reversing the bits
-    ("uint16", 3): (
-        "ffv1",
-        "rgb48",
-    ),  # used for multichannel GT e.g. quantized flow and for float32 packed as 2xuint16
+    ("uint16", 3): ("ffv1", "rgb48"),  # used for multichannel GT e.g. quantized flow and for float32 packed as 2xuint16
     ("uint16", 4): ("ffv1", "rgba64"),
 }
+
+if ALLOW_LOSSY_RGB_ENCODE:
+    PROPS_TO_ENCODER_PIXFMT[("uint8", 3)] = ("libx265", "yuv444p")
+    PROPS_TO_ENCODER_PIXFMT[("uint8", 4)] = ("libx265", "yuv444p")
 
 FFMPEG = os.environ.get(ENVIRON_KEYS["ffmpeg"], "ffmpeg")
 FFMPEG_ARGS = [FFMPEG, "-nostdin", "-y", "-hide_banner"]
@@ -72,7 +72,7 @@ def _template_name_to_ffmpeg_format(
 
     newname = re.sub(
         r"\{frame:(0\d+)d\}",  # DONT match {framenext:06d} here because we will explictly fix this later
-        lambda m: "*" if as_glob else f"%{m.group(1)}d",
+        lambda m: "[0-9]*" if as_glob else f"%{m.group(1)}d",
         filename,
     )
 
@@ -166,6 +166,9 @@ def pack_video(
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
     matched = list(match_template_paths(input_frames_path))
+    if len(matched) == 0:
+        logger.warning(f"No frames found for {input_frames_path}, skipping")
+        return
     matched = sorted(matched, key=lambda x: x[0]["frame"])
 
     first = load_any_image(matched[0][1])
