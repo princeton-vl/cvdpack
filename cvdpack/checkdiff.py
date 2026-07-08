@@ -100,6 +100,11 @@ def main():
 
         after = util.load_any_image(after_path)
 
+        if np.issubdtype(before.dtype, np.integer):
+            before = before.astype(np.float64)
+        if np.issubdtype(after.dtype, np.integer):
+            after = after.astype(np.float64)
+
         if before.shape != after.shape:
             raise ValueError(
                 f"Got {before.shape=} and {after.shape=} for {before_path=} and {after_path=}"
