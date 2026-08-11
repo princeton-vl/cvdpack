@@ -81,7 +81,7 @@ def find_jobs(
 ) -> list[Job]:
     if subset is None:
         subset = {}
-    elif "gt_type" in subset and subset["gt_type"] != gt_type:
+    elif "gt_type" in subset and gt_type not in util.as_list(subset["gt_type"]):
         return []
 
     logger.debug(
@@ -89,8 +89,10 @@ def find_jobs(
     )
 
     subset = {**subset, "gt_type": gt_type}
+    # a multi-valued key must stay a filter, formatting it in would stringify the list
+    fixed = {k: v for k, v in subset.items() if len(util.as_list(v)) == 1}
     input_template, matched_keys = util.format_template(
-        input_template, subset, return_matched=True
+        input_template, fixed, return_matched=True
     )
     matched_keys.add("gt_type")
     # Subset keys not present in this template's variables are irrelevant to it;
@@ -116,7 +118,7 @@ def find_jobs(
         ):
             continue
 
-        vid_info.update(subset)
+        vid_info.update(fixed)
 
         output_path = util.format_template(output_template, vid_info, allow_missing=[])
         if lazy and output_path.exists():

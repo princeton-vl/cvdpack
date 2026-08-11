@@ -204,6 +204,12 @@ def parse_dictlist_strings(argstrings: list[str] | None):
     return args
 
 
+def as_list(val: object) -> list:
+    if isinstance(val, (list, set, tuple)):
+        return list(val)
+    return [val]
+
+
 def included_in_filter(
     file_keys: dict,
     filter_vals: dict | None,
@@ -223,11 +229,6 @@ def included_in_filter(
         )
 
     res = all(
-        (
-            k not in file_keys
-            or file_keys[k] == v
-            or (isinstance(v, (list, set)) and file_keys[k] in v)
-        )
-        for k, v in filter_vals.items()
+        k not in file_keys or file_keys[k] in as_list(v) for k, v in filter_vals.items()
     )
     return res
