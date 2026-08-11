@@ -19,9 +19,9 @@ classifiers = [
 
 requires-python = ">3.10.0"
 dependencies = [
-    "numpy<2",
-    "opencv-python",
-    "tqdm"
+    "numpy>=1.23.5,<2",
+    "opencv-python>=4.7.0.68",
+    "tqdm>=4.60.0"
 ]
 
 [project.scripts]
@@ -34,8 +34,11 @@ slurm = [
 ]
 dev = [
     "ruff",
-    "matplotlib",
-    "pytest"
+    "matplotlib>=3.6.2",
+    "pytest>=7.2,<10"
+]
+test = [
+    "pytest>=7.2,<10"
 ]
 
 [build-system]
