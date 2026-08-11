@@ -896,6 +896,7 @@ def main():
         )
 
     subset = util.parse_dictlist_strings(args.subset)
+    util.validate_subset_keys(subset, config)
     dataset_jobprocess_kwargs = dict(
         steps=args.steps,
         config=config,

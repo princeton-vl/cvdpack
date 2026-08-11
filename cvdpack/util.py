@@ -204,6 +204,39 @@ def parse_dictlist_strings(argstrings: list[str] | None):
     return args
 
 
+def template_fields(template: Path | str) -> set[str]:
+    return {
+        field for _, field, _, _ in Formatter().parse(str(template)) if field is not None
+    }
+
+
+def config_subset_keys(config: dict) -> set[str]:
+    templates = [
+        data_type[name]
+        for data_type in config.get("data_types", {}).values()
+        for name in ("original_path_template", "packed_path_template")
+        if name in data_type
+    ]
+
+    keys = {"gt_type"}
+    for template in templates:
+        keys |= template_fields(template)
+    return keys
+
+
+def validate_subset_keys(subset: dict | None, config: dict | None) -> None:
+    if not subset or config is None:
+        return
+
+    allowed = config_subset_keys(config)
+    unknown = set(subset.keys()) - allowed
+    if unknown:
+        raise ValueError(
+            f"--subset had keys {sorted(unknown)} which appear in no path template of this dataset, "
+            f"so they would silently select nothing. Keys available to subset on are {sorted(allowed)}"
+        )
+
+
 def included_in_filter(
     file_keys: dict,
     filter_vals: dict | None,
