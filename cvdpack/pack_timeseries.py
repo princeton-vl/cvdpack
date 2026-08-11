@@ -1,17 +1,17 @@
 import logging
+import os
 import re
 import shutil
 import subprocess
-import os
 import tarfile
 from pathlib import Path
 from typing import Literal
 
 from .util import (
-    match_template_paths,
-    format_template,
     ENVIRON_KEYS,
+    format_template,
     load_any_image,
+    match_template_paths,
 )
 
 logger = logging.getLogger("cvdpack")
@@ -38,10 +38,16 @@ ALLOW_LOSSY_RGB_ENCODE = (
 PROPS_TO_ENCODER_PIXFMT = {
     ("uint8", 1): ("ffv1", "gray"),  # used for binary masks or <256 segmentation labels
     ("uint8", 3): ("ffv1", "rgb24"),  # used for rgb video or sometimes normals
-    ("uint8", 4): ("ffv1", "rgb24"),  # alpha channel is dropped; assumes alpha=1 everywhere
+    ("uint8", 4): (
+        "ffv1",
+        "rgb24",
+    ),  # alpha channel is dropped; assumes alpha=1 everywhere
     ("uint16", 1): ("ffv1", "gray16le"),  # used for 1channel GT e.g. quantized depth
     # NOTE: I investigated specifying endianness e.g. rgb48le rgb48be when packing floats, but it doesnt seem to matter. Neither does explicitly reversing the bits
-    ("uint16", 3): ("ffv1", "rgb48"),  # used for multichannel GT e.g. quantized flow and for float32 packed as 2xuint16
+    ("uint16", 3): (
+        "ffv1",
+        "rgb48",
+    ),  # used for multichannel GT e.g. quantized flow and for float32 packed as 2xuint16
     ("uint16", 4): ("ffv1", "rgba64"),
 }
 

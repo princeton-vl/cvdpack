@@ -1,3 +1,4 @@
+import logging
 import re
 from pathlib import Path
 from string import Formatter
@@ -5,7 +6,6 @@ from typing import Generator
 
 import cv2
 import numpy as np
-import logging
 
 logger = logging.getLogger("cvdpack")
 

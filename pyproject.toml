@@ -43,6 +43,22 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.ruff.lint]
+select = [
+    "E",
+    "I",
+    "F",
+    "S102", # no exec()
+    "TID252", # relative imports only allowed for siblings
+]
+ignore = [
+    "E501", # over-length lines, formatter should handle it
+    "E741", # ambiguous variable name
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",

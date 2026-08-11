@@ -1,10 +1,11 @@
-import numpy as np
-import pytest
 import logging
 
-from cvdpack.pack_timeseries import pack_video, unpack_video
-from cvdpack.util import save_any_image, load_any_image
+import numpy as np
+import pytest
+
 import cvdpack.util as util
+from cvdpack.pack_timeseries import pack_video, unpack_video
+from cvdpack.util import load_any_image, save_any_image
 
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(name)s:%(message)s")
 

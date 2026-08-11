@@ -13,10 +13,10 @@ import multiprocessing
 import os
 import shutil
 import subprocess
-import time
 import tempfile
-from datetime import datetime
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Literal
@@ -24,14 +24,12 @@ from typing import Callable, Literal
 import numpy as np
 from tqdm import tqdm
 
-from cvdpack import __version__, compatibility_version
-from cvdpack import util
-from cvdpack import pack_frames
+from cvdpack import __version__, compatibility_version, pack_frames, util
 from cvdpack.pack_timeseries import (
-    pack_video,
-    unpack_video,
     pack_tarball,
+    pack_video,
     unpack_tarball,
+    unpack_video,
 )
 
 try:
@@ -243,7 +241,9 @@ def _process_video(
             data = dict(np.load(input_path))
             shapes = {k: v.shape[0] for k, v in data.items()}
             if len(set(shapes.values())) != 1:
-                raise ValueError(f"{input_path} has inconsistent timestep dims: {shapes}")
+                raise ValueError(
+                    f"{input_path} has inconsistent timestep dims: {shapes}"
+                )
             n_frames = next(iter(shapes.values()))
             for i in range(n_frames):
                 frame = frame_start + i * frame_step
@@ -256,7 +256,9 @@ def _process_video(
             data = dict(np.load(input_path))
             shapes = {k: v.shape[0] for k, v in data.items()}
             if len(set(shapes.values())) != 1:
-                raise ValueError(f"{input_path} has inconsistent timestep dims: {shapes}")
+                raise ValueError(
+                    f"{input_path} has inconsistent timestep dims: {shapes}"
+                )
             n_frames = next(iter(shapes.values()))
             for i in range(n_frames):
                 frame = frame_start + i * frame_step
@@ -544,7 +546,8 @@ def pack_dataset(
         )
 
     execute_jobs(
-        log_folder=output_folder / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_pack",
+        log_folder=output_folder
+        / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_pack",
         func=process_video_job,
         jobs=jobs,
         parallel_mode=parallel_mode,
@@ -608,7 +611,8 @@ def unpack_dataset(
         )
 
     execute_jobs(
-        log_folder=output_folder / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_unpack",
+        log_folder=output_folder
+        / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_unpack",
         func=process_video_job,
         jobs=jobs,
         parallel_mode=parallel_mode,
@@ -626,7 +630,9 @@ def select_tmp_folder(candidates: list[Path], min_space_mb: int) -> Path:
                 root = root.parent
             free_mb = shutil.disk_usage(root).free // (1024 * 1024)
             if free_mb < min_space_mb:
-                logger.info(f"Skipping {candidate}: only {free_mb}MB free, need {min_space_mb}MB")
+                logger.info(
+                    f"Skipping {candidate}: only {free_mb}MB free, need {min_space_mb}MB"
+                )
                 continue
             candidate.mkdir(parents=True, exist_ok=True)
             return Path(tempfile.mkdtemp(dir=candidate))
@@ -670,7 +676,9 @@ def validate_args(args: argparse.Namespace):
         )
 
     if args.tmp_folder is not None:
-        args.tmp_folder = select_tmp_folder(args.tmp_folder, args.min_tmp_folder_space_mb)
+        args.tmp_folder = select_tmp_folder(
+            args.tmp_folder, args.min_tmp_folder_space_mb
+        )
 
     return args
 
