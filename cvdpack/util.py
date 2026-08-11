@@ -206,7 +206,9 @@ def parse_dictlist_strings(argstrings: list[str] | None):
 
 def template_fields(template: Path | str) -> set[str]:
     return {
-        field for _, field, _, _ in Formatter().parse(str(template)) if field is not None
+        field
+        for _, field, _, _ in Formatter().parse(str(template))
+        if field is not None
     }
 
 
