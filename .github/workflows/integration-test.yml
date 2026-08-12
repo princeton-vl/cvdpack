@@ -1,0 +1,37 @@
+name: Integration Test
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-test:
+    if: github.repository == 'princeton-vl/cvdpack_internal' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: [self-hosted, cpu]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          python-version: "3.11"
+      - run: uv sync --extra dev
+      - name: Run roundtrip integration test
+        env:
+          CASES: ${{ vars.INTEGRATION_CASES }}
+        run: |
+          bash tests/integration_test/run.sh \
+            "${{ vars.INTEGRATION_DATA }}" \
+            "$RUNNER_TEMP/integration_out" $CASES
+      - name: Upload checkdiff logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkdiff-logs
+          path: ${{ runner.temp }}/integration_out/*.log
+          if-no-files-found: ignore
