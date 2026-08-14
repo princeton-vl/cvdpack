@@ -904,6 +904,16 @@ def main():
         )
 
     subset = util.parse_dictlist_strings(args.subset)
+
+    # copy_files filters on the --input/--output templates, ignoring any config
+    if args.action == "copy":
+        subset_keys = util.template_fields(args.input) | util.template_fields(
+            args.output
+        )
+    else:
+        subset_keys = util.config_subset_keys(config)
+    util.validate_subset_keys(subset, subset_keys)
+
     dataset_jobprocess_kwargs = dict(
         steps=args.steps,
         config=config,
