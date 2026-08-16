@@ -1,6 +1,9 @@
 import itertools
+import json
 import logging
 from pathlib import Path
+
+import pytest
 
 from cvdpack import main, util
 
@@ -234,3 +237,79 @@ def test_format_template_numeric_spec_accepts_string_value() -> None:
 
 def test_format_template_keeps_zero_padded_string_unspecced() -> None:
     assert util.format_template("{scene}/x.png", {"scene": "0001"}) == "0001/x.png"
+
+
+def _copy_argv(input_folder: Path, output_folder: Path) -> list[str]:
+    return [
+        "cvdpack",
+        "copy",
+        "--input",
+        str(input_folder / "{frame:06d}.png"),
+        "--output",
+        str(output_folder / "{frame:06d}.png"),
+        # an omitted --subset is parsed as None, which currently filters out every file
+        "--subset",
+    ]
+
+
+def _write_frames(input_folder: Path, n_frames: int) -> None:
+    input_folder.mkdir()
+    for frame in range(n_frames):
+        (input_folder / f"{frame:06d}.png").write_bytes(b"")
+
+
+def test_copy_without_config(tmp_path: Path, monkeypatch) -> None:
+    input_folder = tmp_path / "input"
+    _write_frames(input_folder, 3)
+    assert not (input_folder / "cvdpack.json").exists()
+
+    output_folder = tmp_path / "output"
+    monkeypatch.setattr("sys.argv", _copy_argv(input_folder, output_folder))
+
+    main.main()
+
+    assert sorted(p.name for p in output_folder.iterdir()) == [
+        "000000.png",
+        "000001.png",
+        "000002.png",
+    ]
+
+
+def test_copy_ignores_an_incompatible_config(tmp_path: Path, monkeypatch) -> None:
+    input_folder = tmp_path / "input"
+    _write_frames(input_folder, 2)
+
+    config = {
+        "metadata": {"compatibility_version": "999.0", "cvdpack_version": "999.0.0"}
+    }
+    (input_folder / "cvdpack.json").write_text(json.dumps(config))
+
+    output_folder = tmp_path / "output"
+    monkeypatch.setattr("sys.argv", _copy_argv(input_folder, output_folder))
+
+    main.main()
+
+    assert sorted(p.name for p in output_folder.iterdir()) == [
+        "000000.png",
+        "000001.png",
+    ]
+
+
+def test_copy_rejects_an_explicit_config(tmp_path: Path, monkeypatch) -> None:
+    input_folder = tmp_path / "input"
+    _write_frames(input_folder, 2)
+    (input_folder / "cvdpack.json").write_text(json.dumps({"metadata": {}}))
+
+    output_folder = tmp_path / "output"
+    argv = _copy_argv(input_folder, output_folder)
+    argv[argv.index("--subset") :] = [
+        "--config",
+        str(input_folder / "cvdpack.json"),
+        "--subset",
+    ]
+    monkeypatch.setattr("sys.argv", argv)
+
+    with pytest.raises(ValueError, match="copy does not read a config"):
+        main.main()
+
+    assert not output_folder.exists()

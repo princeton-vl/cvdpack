@@ -136,3 +136,63 @@ def test_tarball_unpack_ignores_traversal_in_member_names(tmp_path: Path) -> Non
 
     assert (unpacked / "escaped.txt").read_bytes() == b"pwned\n"
     assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_plain_tar_roundtrip_is_uncompressed(tmp_path: Path) -> None:
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    expected: dict[str, bytes] = {}
+    for i in range(3):
+        name = f"frame_{i:04d}.txt"
+        data = f"frame {i}\n".encode()
+        (frames / name).write_bytes(data)
+        expected[name] = data
+
+    archive = tmp_path / "frames.tar"
+    pack_tarball(frames / "frame_{frame:04d}.txt", archive)
+    assert archive.read_bytes()[:2] != b"\x1f\x8b"
+
+    unpacked = tmp_path / "unpacked"
+    unpack_tarball(archive, unpacked / "frame_{frame:04d}.txt")
+
+    actual = {path.name: path.read_bytes() for path in unpacked.iterdir()}
+    assert actual == expected
+
+
+def test_video_unpack_redirected_with_nonzero_frame_start(tmp_path: Path) -> None:
+    np.random.seed(7)
+    frames_dir = tmp_path / "frames"
+    frames_dir.mkdir()
+
+    frame_start, frame_step, n_frames = 2, 2, 3
+    original = {}
+    for i in range(n_frames):
+        frame = frame_start + i * frame_step
+        data = np.random.randint(0, 256, (40, 32), dtype=np.uint8)
+        original[frame] = data.copy()
+        save_any_image(data, frames_dir / f"frame_{frame:04d}.png")
+
+    video_path = tmp_path / "video.mkv"
+    pack_video(
+        input_frames_path=frames_dir / "frame_{frame:04d}.png",
+        output_video_path=video_path,
+        tmp_folder=tmp_path / "tmp_pack",
+        frame_start=frame_start,
+        frame_step=frame_step,
+    )
+
+    out_template = tmp_path / "unpacked" / "frame_{frame:04d}.png"
+    unpack_video(
+        input_video_path=video_path,
+        output_frames_path_template=out_template,
+        tmp_folder=tmp_path / "tmp_unpack",
+        frame_start=frame_start,
+        frame_step=frame_step,
+    )
+
+    out_paths = dict(
+        (info["frame"], path) for info, path in util.match_template_paths(out_template)
+    )
+    assert sorted(out_paths) == sorted(original)
+    for frame, data in original.items():
+        np.testing.assert_array_equal(load_any_image(out_paths[frame]), data)

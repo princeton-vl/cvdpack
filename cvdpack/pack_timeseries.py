@@ -126,12 +126,14 @@ def unpack_video(
         ffmpeg_args += ["-loglevel", "error"]
     if n_cpus is not None:
         ffmpeg_args.extend(["-threads", str(n_cpus)])
+    # the redirect rename loop applies frame_start itself, so tmp numbering stays zero-based
+    start_number = 0 if do_redirect else frame_start
     ffmpeg_args.extend(
         [
             "-i",
             str(input_video_path),
             "-start_number",
-            str(frame_start),
+            str(start_number),
             str(output_path),
         ]
     )
@@ -286,7 +288,8 @@ def pack_tarball(input_frames_template: Path, output_tarball_path: Path):
     )
     output_tarball_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tarfile.open(output_tarball_path, "w:gz") as tar:
+    mode = "w:gz" if output_tarball_path.name.endswith(".tar.gz") else "w"
+    with tarfile.open(output_tarball_path, mode) as tar:
         for _, frame_input_path in match_template_paths(input_frames_template):
             tar.add(frame_input_path, arcname=frame_input_path.name)
 
@@ -312,7 +315,7 @@ def unpack_tarball(
     output_folder.mkdir(parents=True, exist_ok=True)
 
     # upstream releases fold frames under a folder prefix, so a member name is not a path
-    with tarfile.open(input_tarball_path, "r:gz") as tar:
+    with tarfile.open(input_tarball_path, "r:*") as tar:
         members = [member for member in tar.getmembers() if member.isfile()]
         destinations = [output_folder / Path(m.name).name for m in members]
         distinct = len(set(destinations))

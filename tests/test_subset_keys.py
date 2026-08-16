@@ -78,26 +78,28 @@ def write_copy_dataset(root):
 def run_main(monkeypatch, action, inp, out, config_path, subset):
     argv = ["cvdpack", action]
     argv += ["--input", str(inp), "--output", str(out)]
-    argv += ["--config", str(config_path), "--subset", subset]
+    if config_path is not None:
+        argv += ["--config", str(config_path)]
+    argv += ["--subset", subset]
     argv += ["--steps", "quantize"]
     monkeypatch.setattr(sys, "argv", argv)
     main.main()
 
 
 def test_copy_subset_key_absent_from_config_is_allowed(tmp_path, monkeypatch):
-    config_path = write_copy_dataset(tmp_path)
+    write_copy_dataset(tmp_path)
     inp = tmp_path / "input" / "{subject}" / "{frame}.png"
     out = tmp_path / "output" / "{subject}" / "{frame}.png"
-    run_main(monkeypatch, "copy", inp, out, config_path, "subject=alice")
+    run_main(monkeypatch, "copy", inp, out, None, "subject=alice")
     assert (tmp_path / "output" / "alice" / "left.png").exists()
 
 
 def test_copy_subset_key_absent_from_input_template_is_rejected(tmp_path, monkeypatch):
-    config_path = write_copy_dataset(tmp_path)
+    write_copy_dataset(tmp_path)
     inp = tmp_path / "input" / "{subject}" / "{frame}.png"
     out = tmp_path / "output" / "{subject}" / "{frame}.png"
     with pytest.raises(ValueError, match="Keys available to subset on are"):
-        run_main(monkeypatch, "copy", inp, out, config_path, "traj=0")
+        run_main(monkeypatch, "copy", inp, out, None, "traj=0")
 
 
 def test_pack_still_rejects_subset_key_absent_from_config(tmp_path, monkeypatch):

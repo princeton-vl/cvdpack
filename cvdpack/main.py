@@ -17,7 +17,6 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -40,19 +39,6 @@ except ImportError:
 logger = logging.getLogger("cvdpack")
 
 SLURM_ARRAY_MAX = int(os.environ.get(util.ENVIRON_KEYS["array_max"], 500))
-
-
-class GtType(Enum):
-    RGB = "rgb"
-    DEPTH = "depth"
-    FLOW = "flow"
-    SURFACE_NORMAL = "surface_normal"
-    SEGMENTATION = "segmentation"
-    BINARY_MASK = "binary_mask"
-
-    @classmethod
-    def from_str(cls, s: str):
-        return cls(s.lower())
 
 
 @dataclass
@@ -163,6 +149,29 @@ def ambiguous_job_claims(jobs: list[Job]) -> dict[Path, list[str]]:
     return {path: names for path, names in claims.items() if len(names) > 1}
 
 
+def _unpack_npz_frames(
+    input_path: Path,
+    output_template: Path,
+    frame_start: int,
+    frame_step: int,
+) -> None:
+    data = dict(np.load(input_path))
+    shapes = {k: v.shape[0] for k, v in data.items()}
+    if len(set(shapes.values())) != 1:
+        raise ValueError(f"{input_path} has inconsistent timestep dims: {shapes}")
+    n_frames = next(iter(shapes.values()))
+    for i in range(n_frames):
+        frame = frame_start + i * frame_step
+        out_path = util.format_template(output_template, {"frame": frame})
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        frame_data = {k: v[i] for k, v in data.items()}
+        if out_path.suffix == ".json":
+            listified = {k: v.tolist() for k, v in frame_data.items()}
+            out_path.write_text(json.dumps(listified))
+        else:
+            np.savez(out_path.with_suffix(""), **frame_data)
+
+
 def _process_video(
     input_path: Path,
     output_path: Path,
@@ -182,123 +191,87 @@ def _process_video(
     frame_start = job.config.get("frame_start", 0)
     frame_step = job.config.get("frame_step", 1)
 
-    def _eff_suffix(p: Path) -> str:
-        return ".tar.gz" if p.name.endswith(".tar.gz") else p.suffix
+    # each block checks the current representation and advances it toward dst
+    cur = input_path
+    dst = output_path
 
-    match _eff_suffix(input_path), _eff_suffix(output_path):
-        case ".png", ".mkv":
-            pack_video(
-                input_path,
-                output_path,
-                frame_start=frame_start,
-                frame_step=frame_step,
-                n_cpus=job.cpus_per_worker,
-                loglevel=job.loglevel,
-                tmp_folder=tmp_folder,
-            )
-        case _, ".mkv":
-            tmp_template = tmp_folder / "{frame:06d}.png"
-            pack_frames.pack_frameset(
-                input_path,
-                tmp_template,
-                packer=packer,
-            )
-            pack_video(
-                tmp_template,
-                output_path,
-                frame_start=frame_start,
-                frame_step=frame_step,
-                n_cpus=job.cpus_per_worker,
-                loglevel=job.loglevel,
-                tmp_folder=tmp_folder,
-            )
-        case _, ".tar.gz":
-            pack_tarball(input_path, output_path)
-        case ".mkv", ".png":
-            unpack_video(
-                input_path,
-                output_path,
-                n_cpus=job.cpus_per_worker,
-                loglevel=job.loglevel,
-                tmp_folder=tmp_folder,
-            )
-        case ".png" | ".jpg" | ".jpeg" | ".npy", ".png":
-            pack_frames.pack_frameset(
-                input_path,
-                output_path,
-                packer=packer,
-            )
-        case ".png", _:
-            pack_frames.unpack_frameset(
-                input_path,
-                output_path,
-                packer=packer,
-                unpack_channels_last=job.config.get("unpack_channels_last", None),
-            )
-        case ".mkv", _:
-            tmp_frames = tmp_folder / "{frame:06d}.png"
-            unpack_video(
-                input_path,
-                tmp_frames,
-                frame_start=frame_start,
-                frame_step=frame_step,
-                n_cpus=job.cpus_per_worker,
-                loglevel=job.loglevel,
-                tmp_folder=tmp_folder,
-            )
-            pack_frames.unpack_frameset(
-                tmp_frames,
-                output_path,
-                packer=packer,
-                unpack_channels_last=job.config.get("unpack_channels_last", None),
-            )
-        case ".tar.gz", _:
-            unpack_tarball(input_path, output_path)
-        case ".npz", ".json" if "{frame" in str(output_path):
-            data = dict(np.load(input_path))
-            shapes = {k: v.shape[0] for k, v in data.items()}
-            if len(set(shapes.values())) != 1:
-                raise ValueError(
-                    f"{input_path} has inconsistent timestep dims: {shapes}"
-                )
-            n_frames = next(iter(shapes.values()))
-            for i in range(n_frames):
-                frame = frame_start + i * frame_step
-                frame_data = {k: v[i].tolist() for k, v in data.items()}
-                out_path = util.format_template(output_path, {"frame": frame})
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                with out_path.open("w") as f:
-                    json.dump(frame_data, f)
-        case ".npz", ".npz" if "{frame" in str(output_path):
-            data = dict(np.load(input_path))
-            shapes = {k: v.shape[0] for k, v in data.items()}
-            if len(set(shapes.values())) != 1:
-                raise ValueError(
-                    f"{input_path} has inconsistent timestep dims: {shapes}"
-                )
-            n_frames = next(iter(shapes.values()))
-            for i in range(n_frames):
-                frame = frame_start + i * frame_step
-                frame_data = {k: v[i] for k, v in data.items()}
-                out_path = util.format_template(output_path, {"frame": frame})
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                np.savez(out_path.with_suffix(""), **frame_data)
-        case ".txt", ".npy":
-            data = np.loadtxt(input_path)
-            assert "{" not in str(output_path), output_path
-            np.save(output_path, data)
-            assert output_path.exists(), f"Failed to save {output_path=}"
-        case ".npy", ".txt":
-            data = np.load(input_path)
-            assert "{" not in str(output_path), output_path
-            np.savetxt(output_path, data)
-            assert output_path.exists(), f"Failed to save {output_path=}"
-        case x, y if x == y:
-            if not input_path.resolve() == output_path.resolve():
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy(input_path, output_path)
-        case _:
-            raise ValueError(f"Invalid {input_path.suffix=} {output_path.suffix=}")
+    if dst.name.endswith((".tar", ".tar.gz")):
+        pack_tarball(cur, dst)
+        return
+    if cur.name.endswith((".tar", ".tar.gz")):
+        unpack_tarball(cur, dst)
+        return
+
+    if (
+        cur.suffix == ".npz"
+        and dst.suffix in (".json", ".npz")
+        and "{frame" in str(dst)
+    ):
+        _unpack_npz_frames(cur, dst, frame_start, frame_step)
+        return
+
+    if cur.suffix == ".txt" and dst.suffix == ".npy":
+        assert "{" not in str(dst), dst
+        np.save(dst, np.loadtxt(cur))
+        assert dst.exists(), f"Failed to save {dst=}"
+        return
+    if cur.suffix == ".npy" and dst.suffix == ".txt":
+        assert "{" not in str(dst), dst
+        np.savetxt(dst, np.load(cur))
+        assert dst.exists(), f"Failed to save {dst=}"
+        return
+
+    if cur.suffix == ".mkv" and dst.suffix != ".mkv":
+        nxt = dst if dst.suffix == ".png" else tmp_folder / "{frame:06d}.png"
+        unpack_video(
+            cur,
+            nxt,
+            frame_start=frame_start,
+            frame_step=frame_step,
+            n_cpus=job.cpus_per_worker,
+            loglevel=job.loglevel,
+            tmp_folder=tmp_folder,
+        )
+        if nxt == dst:
+            return
+        cur = nxt
+
+    if dst.suffix == ".mkv":
+        if cur.suffix != ".png":
+            nxt = tmp_folder / "{frame:06d}.png"
+            pack_frames.pack_frameset(cur, nxt, packer=packer)
+            cur = nxt
+        pack_video(
+            cur,
+            dst,
+            frame_start=frame_start,
+            frame_step=frame_step,
+            n_cpus=job.cpus_per_worker,
+            loglevel=job.loglevel,
+            tmp_folder=tmp_folder,
+        )
+        return
+
+    if cur.suffix in (".png", ".jpg", ".jpeg", ".npy") and dst.suffix == ".png":
+        pack_frames.pack_frameset(cur, dst, packer=packer)
+        return
+
+    if cur.suffix == ".png":
+        pack_frames.unpack_frameset(
+            cur,
+            dst,
+            packer=packer,
+            unpack_channels_last=job.config.get("unpack_channels_last", None),
+        )
+        return
+
+    if cur.suffix == dst.suffix:
+        if cur.resolve() != dst.resolve():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(cur, dst)
+        return
+
+    raise ValueError(f"Invalid {input_path.suffix=} {output_path.suffix=}")
 
 
 def process_video_job(job: Job):
@@ -336,32 +309,66 @@ def process_video_job(job: Job):
         #    shutil.rmtree(tmp_path)
 
 
+def exited_jobs(jobs):
+    finished, crashed = [], []
+    for j in jobs:
+        if j.state in ["PENDING", "RUNNING"]:
+            continue
+        try:
+            j.result()
+            finished.append(j)
+        except Exception as e:
+            logger.error(f"Job {j.job_id} failed with error: {e}")
+            crashed.append(j)
+    return finished, crashed
+
+
 def wait_jobs(launched_jobs, pbar):
     """Wait for a list of submitted jobs to complete, checking periodically."""
-    finished_jobs = set()
-    crashed_jobs = []
-    while len(finished_jobs) < len(launched_jobs):
-        for j in launched_jobs:
-            if j.job_id in finished_jobs:
-                continue
-            if j.state in ["PENDING", "RUNNING"]:
-                continue
-
-            try:
-                j.result()
-                msg = f"Job {j.job_id} completed successfully"
-            except Exception as e:
-                msg = f"Job {j.job_id} failed with error: {e}"
-                logger.error(msg)
-                crashed_jobs.append(j)
-
-            pbar.update(1)
-            pbar.set_description(msg)
-            finished_jobs.add(j.job_id)
-
+    pending = list(launched_jobs)
+    all_crashed = []
+    while pending:
+        finished, crashed = exited_jobs(pending)
+        all_crashed += crashed
+        exited = {j.job_id for j in finished + crashed}
+        pending = [j for j in pending if j.job_id not in exited]
+        pbar.update(len(finished) + len(crashed))
         time.sleep(1)
+    return all_crashed
 
-    return crashed_jobs
+
+def _execute_jobs_slurm(log_folder, func, jobs, n_workers, slurm_args, cpus_per_worker):
+    if submitit is None:
+        raise ValueError(
+            "submitit is not installed. Please install, or install cvdpack[slurm] optional extras"
+        )
+    log_folder.mkdir(parents=True, exist_ok=True)
+    executor = submitit.AutoExecutor(
+        folder=log_folder,
+    )
+    executor.update_parameters(
+        slurm_mem_gb=4,
+        slurm_cpus_per_task=cpus_per_worker or 4,
+        slurm_time=60,
+        slurm_array_parallelism=n_workers,
+    )
+    if slurm_args is not None:
+        logger.debug(f"Updating slurm args: {slurm_args=}")
+        if isinstance(n := slurm_args.get("slurm_nodelist"), list):
+            slurm_args["slurm_nodelist"] = ",".join(n)
+        executor.update_parameters(**slurm_args)
+
+    pbar = tqdm(total=len(jobs), desc="Running jobs")
+    crashed = []
+    for i in range(0, len(jobs), SLURM_ARRAY_MAX):
+        launched = executor.map_array(func, jobs[i : i + SLURM_ARRAY_MAX])
+        crashed += wait_jobs(launched, pbar)
+
+    if len(crashed) > 0:
+        raise ValueError(
+            f"{len(crashed)} jobs crashed, dataset is likely not safe to use. "
+            f"Please check {log_folder} for ID_log.err and ID_log.out for each ID in {crashed}"
+        )
 
 
 def execute_jobs(
@@ -380,43 +387,16 @@ def execute_jobs(
             func(job)
         return
 
-    match parallel_mode:
-        case "multiprocess":
-            with multiprocessing.Pool(n_workers) as pool:
-                pool.map(func, jobs)
-        case "slurm":
-            if submitit is None:
-                raise ValueError(
-                    "submitit is not installed. Please install, or install cvdpack[slurm] optional extras"
-                )
-            log_folder.mkdir(parents=True, exist_ok=True)
-            executor = submitit.AutoExecutor(
-                folder=log_folder,
-            )
-            executor.update_parameters(
-                slurm_mem_gb=4,
-                slurm_cpus_per_task=cpus_per_worker or 4,
-                slurm_time=60,
-                slurm_array_parallelism=n_workers,
-            )
-            if slurm_args is not None:
-                logger.debug(f"Updating slurm args: {slurm_args=}")
-                if isinstance(n := slurm_args.get("slurm_nodelist"), list):
-                    slurm_args["slurm_nodelist"] = ",".join(n)
-                executor.update_parameters(**slurm_args)
-
-            pbar = tqdm(total=len(jobs), desc="Running jobs")
-            crashed = []
-            for i in range(0, len(jobs), SLURM_ARRAY_MAX):
-                launched = executor.map_array(func, jobs[i : i + SLURM_ARRAY_MAX])
-                crashed += wait_jobs(launched, pbar)
-            if len(crashed) > 0:
-                raise ValueError(
-                    f"{len(crashed)} jobs crashed, dataset is likely not safe to use. "
-                    f"Please check {log_folder} for ID_log.err and ID_log.out for each ID in {crashed}"
-                )
-        case _:
-            raise ValueError(f"Invalid {parallel_mode=}")
+    if parallel_mode == "multiprocess":
+        with multiprocessing.Pool(n_workers) as pool:
+            pool.map(func, jobs)
+        return
+    if parallel_mode == "slurm":
+        _execute_jobs_slurm(
+            log_folder, func, jobs, n_workers, slurm_args, cpus_per_worker
+        )
+        return
+    raise ValueError(f"Invalid {parallel_mode=}")
 
 
 def decide_dataset_job_templates(
@@ -655,23 +635,32 @@ def unpack_dataset(
     )
 
 
+def _folder_usage_mb(candidate) -> int | None:
+    try:
+        root = candidate
+        while not root.exists():
+            root = root.parent
+        free_mb = shutil.disk_usage(root).free // (1024 * 1024)
+    except OSError as e:
+        logger.info(f"Skipping {candidate}: {e}")
+        return None
+    return free_mb
+
+
 def select_tmp_folder(candidates: list[Path], min_space_mb: int) -> Path:
     for candidate in candidates:
+        free_mb = _folder_usage_mb(candidate)
+        if free_mb is None:
+            continue
+        if free_mb < min_space_mb:
+            logger.info(f"Skipping {candidate}: {free_mb}MB < {min_space_mb}MB")
+            continue
         try:
-            root = candidate
-            while not root.exists():
-                root = root.parent
-            free_mb = shutil.disk_usage(root).free // (1024 * 1024)
-            if free_mb < min_space_mb:
-                logger.info(
-                    f"Skipping {candidate}: only {free_mb}MB free, need {min_space_mb}MB"
-                )
-                continue
             candidate.mkdir(parents=True, exist_ok=True)
             return Path(tempfile.mkdtemp(dir=candidate))
         except OSError as e:
             logger.info(f"Skipping {candidate}: {e}")
-            continue
+
     raise RuntimeError(
         f"No usable tmp_folder found among candidates {candidates} "
         f"(need {min_space_mb}MB free and write access)"
@@ -910,14 +899,21 @@ def main():
     if config_path is None:
         config_path = args.input / "cvdpack.json"
 
-    if args.action == "copy" and not config_path.exists():
+    if args.action == "copy" and args.config is not None:
+        raise ValueError(
+            f"--config={args.config} was provided but copy does not read a config"
+        )
+
+    # copy never reads the config; version compatibility matters at unpack time
+    if args.action == "copy":
         config = None
+        config_version = None
+        compat_version = None
     else:
         with config_path.open("r") as f:
             config = json.load(f)
         config_version = config.get("metadata", {}).get("cvdpack_version")
-
-    compat_version = config.get("metadata", {}).get("compatibility_version", None)
+        compat_version = config.get("metadata", {}).get("compatibility_version", None)
     if compat_version is not None and compat_version != compatibility_version:
         raise ValueError(
             f"Config {config_path} had compatibility version {compat_version} cvdpack=={config_version}"
