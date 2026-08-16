@@ -100,7 +100,7 @@ wheels = [
 
 [[package]]
 name = "cvdpack"
-version = "0.5.2"
+version = "0.5.3"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -118,6 +118,9 @@ slurm = [
     { name = "setuptools" },
     { name = "submitit" },
 ]
+test = [
+    { name = "pytest" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -126,16 +129,17 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "matplotlib", marker = "extra == 'dev'" },
-    { name = "numpy", specifier = "<2" },
-    { name = "opencv-python" },
-    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.6.2" },
+    { name = "numpy", specifier = ">=1.23.5,<2" },
+    { name = "opencv-python", specifier = ">=4.7.0.68" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.2,<10" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.2,<10" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "setuptools", marker = "extra == 'slurm'" },
     { name = "submitit", marker = "extra == 'slurm'" },
-    { name = "tqdm" },
+    { name = "tqdm", specifier = ">=4.60.0" },
 ]
-provides-extras = ["slurm", "dev"]
+provides-extras = ["slurm", "dev", "test"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.4.1" }]

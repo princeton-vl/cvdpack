@@ -54,7 +54,7 @@ def save_any_image(
     assert path.exists(), f"Failed to save {path=}"
 
 
-def template_to_regex(template: Path, allow_any: list[str] | None = None):
+def template_to_regex(template: Path, allow_any: list[str] | None = None) -> re.Pattern:
     fmt = Formatter()
 
     found_keys = set()
@@ -78,7 +78,7 @@ def template_to_regex(template: Path, allow_any: list[str] | None = None):
             restrictor = r"[^/\\]+"
 
         if field in found_keys:
-            part = rf"{restrictor}"
+            part = rf"(?P={field})"
         else:
             part = rf"(?P<{field}>{restrictor})"
 
@@ -104,8 +104,7 @@ def match_template_paths(
     if first_curlypart is None:
         if template.exists():
             yield ({}, template)
-            return
-        raise ValueError(f"{template=} has no {{}}. Nothing to match?")
+        return
     child_template = "/".join(template.parts[first_curlypart:])
     search_folder = Path(*template.parts[:first_curlypart])
 
@@ -116,8 +115,15 @@ def match_template_paths(
 
     regex = template_to_regex(child_template, allow_any=allow_any)
 
+    # only a {x:d} spec means the field is a number; {x} matching "0001" must stay a string
+    numeric = {
+        field
+        for _, field, spec, _ in Formatter().parse(child_template)
+        if field and spec and spec.endswith("d") and field not in allow_any
+    }
+
     def match_to_dict(m: re.Match):
-        return {k: int(v) if v.isdigit() else v for k, v in m.groupdict().items()}
+        return {k: int(v) if k in numeric else v for k, v in m.groupdict().items()}
 
     glob_pattern = re.sub(r"\{[^}]*\}", "*", child_template)
 
@@ -139,54 +145,46 @@ def format_template(
     template: Path,
     vals: dict,
     allow_missing: list[str] | None = None,
-    return_matched: bool = False,
-) -> Path | tuple[Path, dict]:
+) -> Path:
     """
     Args:
         template: Path or str, must contain {field} or {field:...d} style template strings
         vals: dict, keys must match the {field} strings
         allow_missing: list[str] | None - if provided, keys in the template but not in this list will raise an error
-        return_matched: bool - if True, return the matched keys
     """
-
-    matched = set()
 
     def replace_func(match):
         full_spec = match.group(1)
-        key = full_spec.split(":")[0]
-        if key in vals:
-            try:
-                res = ("{" + full_spec + "}").format(**{key: vals[key]})
-                matched.add(key)
-                return res
-            except ValueError as e:
-                raise ValueError(
-                    f"Invalid {full_spec=} for {key=} {vals[key]=} in {template=}, {e=}"
-                ) from e
-            except KeyError as e:
-                raise ValueError(
-                    f"Missing {key=} in {vals=} for {template=}, {allow_missing=}"
-                ) from e
-        elif allow_missing and key not in allow_missing:
-            raise ValueError(
-                f"Missing {key=} in {vals=} for {template=}, {allow_missing=}"
-            )
+        key, _, spec = full_spec.partition(":")
+        missing_msg = f"Missing {key=} in {vals=} for {template=}, {allow_missing=}"
+        if key not in vals and allow_missing and key not in allow_missing:
+            raise ValueError(missing_msg)
+        if key not in vals:
+            return match.group(0)
 
-        return match.group(0)
+        val = vals[key]
+        if spec.endswith("d") and isinstance(val, str) and val.isdigit():
+            val = int(val)
+
+        try:
+            res = ("{" + full_spec + "}").format(**{key: val})
+        except ValueError as e:
+            msg = f"Invalid {full_spec=} for {key=} {val=} in {template=}, {e=}"
+            raise ValueError(msg) from e
+        except KeyError as e:
+            raise ValueError(missing_msg) from e
+
+        return res
 
     res = re.sub(r"\{([^}]+)\}", replace_func, str(template))
 
     if isinstance(template, Path):
         res = Path(res)
 
-    # logger.debug(f"{format_template.__name__} {template=} -> {res=}, {matched=}")
-
-    if return_matched:
-        return res, matched
     return res
 
 
-def parse_dictlist_strings(argstrings: list[str] | None):
+def parse_dictlist_strings(argstrings: list[str] | None) -> dict[str, list[str]] | None:
     if argstrings is None:
         return None
 
@@ -196,9 +194,7 @@ def parse_dictlist_strings(argstrings: list[str] | None):
         if len(parts) != 2:
             raise ValueError(f"Invalid {arg=}, had {len(parts)=}")
         k, v = parts
-        if "," in v:
-            v = list(v.split(","))
-        args[k] = v
+        args[k] = v.split(",")
 
     logger.debug(f"{parse_dictlist_strings.__name__} mapped {argstrings=} -> {args=}")
     return args
@@ -236,7 +232,7 @@ def validate_subset_keys(subset: dict | None, allowed: set[str]) -> None:
 
 def included_in_filter(
     file_keys: dict,
-    filter_vals: dict | None,
+    filter_vals: dict[str, list] | None,
     allow_extra: set[str] | None = None,
 ) -> bool:
     if filter_vals is None:
@@ -253,11 +249,7 @@ def included_in_filter(
         )
 
     res = all(
-        (
-            k not in file_keys
-            or file_keys[k] == v
-            or (isinstance(v, (list, set)) and file_keys[k] in v)
-        )
+        k not in file_keys or str(file_keys[k]) in [str(x) for x in v]
         for k, v in filter_vals.items()
     )
     return res

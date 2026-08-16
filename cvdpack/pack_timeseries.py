@@ -287,9 +287,18 @@ def pack_tarball(input_frames_template: Path, output_tarball_path: Path):
     output_tarball_path.parent.mkdir(parents=True, exist_ok=True)
 
     with tarfile.open(output_tarball_path, "w:gz") as tar:
-        for frame_info, frame_input_path in match_template_paths(input_frames_template):
-            output_path = format_template(output_tarball_path, frame_info)
-            tar.add(frame_input_path, arcname=output_path.name)
+        for _, frame_input_path in match_template_paths(input_frames_template):
+            tar.add(frame_input_path, arcname=frame_input_path.name)
+
+
+def extract_member(
+    tar: tarfile.TarFile, member: tarfile.TarInfo, output_path: Path
+) -> None:
+    source = tar.extractfile(member)
+    if source is None:
+        raise ValueError(f"Could not read {member.name=} from {tar.name=}")
+    with output_path.open("wb") as dest:
+        shutil.copyfileobj(source, dest)
 
 
 def unpack_tarball(
@@ -299,8 +308,16 @@ def unpack_tarball(
     logger.info(
         f"{unpack_tarball.__name__} {input_tarball_path=} to {output_frames_path_template=}"
     )
-    output_frames_path_template.parent.mkdir(parents=True, exist_ok=True)
+    output_folder = output_frames_path_template.parent
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    # upstream releases fold frames under a folder prefix, so a member name is not a path
     with tarfile.open(input_tarball_path, "r:gz") as tar:
-        for member in tar.getmembers():
-            if member.isfile():
-                tar.extract(member, output_frames_path_template.parent)
+        members = [member for member in tar.getmembers() if member.isfile()]
+        destinations = [output_folder / Path(m.name).name for m in members]
+        distinct = len(set(destinations))
+        if distinct != len(members):
+            msg = f"{len(members)} members of {input_tarball_path} collapse to {distinct} names"
+            raise ValueError(msg)
+        for member, destination in zip(members, destinations):
+            extract_member(tar, member, destination)

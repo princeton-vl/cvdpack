@@ -71,7 +71,7 @@ def find_jobs(
     input_template: Path,
     output_template: Path,
     gt_type: str,
-    subset: dict | None,
+    subset: dict[str, list] | None,
     job_defaults: dict,
     match_video_folder: bool = False,
     lazy: bool = False,
@@ -79,21 +79,32 @@ def find_jobs(
 ) -> list[Job]:
     if subset is None:
         subset = {}
-    elif "gt_type" in subset and subset["gt_type"] != gt_type:
+    elif gt_type not in subset.get("gt_type", [gt_type]):
         return []
 
     logger.debug(
         f"{find_jobs.__name__} {input_template=} {output_template=} {gt_type=} {subset=} {job_defaults=}"
     )
 
-    subset = {**subset, "gt_type": gt_type}
-    input_template, matched_keys = util.format_template(
-        input_template, subset, return_matched=True
+    subset = {**subset, "gt_type": [gt_type]}
+    filename = input_template.parts[-1]
+
+    # a filename-only field is never matched from disk, so each value needs its own job
+    expandable = util.template_fields(filename) - {"frame", "framenext"}
+    expand_key = next(
+        (k for k in sorted(expandable) if len(subset.get(k, [])) > 1), None
     )
-    matched_keys.add("gt_type")
-    # Subset keys not present in this template's variables are irrelevant to it;
-    # treat them as allowed extras so they don't raise in included_in_filter.
-    matched_keys.update(subset.keys())
+    if match_video_folder and "{frame" in filename and expand_key is not None:
+        jobs = []
+        for value in subset[expand_key]:
+            narrowed = {**subset, expand_key: [value]}
+            args = (input_template, output_template, gt_type, narrowed, job_defaults)
+            jobs += find_jobs(*args, match_video_folder, lazy, missing_gt)
+        return jobs
+
+    # multi-valued keys stay filters; gt_type stays a field so it cannot reopen the greedy match
+    fill = {k: v[0] for k, v in subset.items() if len(v) == 1 and k != "gt_type"}
+    input_template = util.format_template(input_template, fill)
 
     if match_video_folder and "{frame" in input_template.parts[-1]:
         search_template = input_template.parent
@@ -109,12 +120,11 @@ def find_jobs(
     skipped_for_lazy = 0
     jobs = []
     for vid_info, vid_input_path in paths:
-        if subset and not util.included_in_filter(
-            vid_info, subset, allow_extra=matched_keys
-        ):
+        if not util.included_in_filter(vid_info, subset, allow_extra=set(subset)):
             continue
 
-        vid_info.update(subset)
+        vid_info.update(fill)
+        vid_info["gt_type"] = gt_type
 
         output_path = util.format_template(output_template, vid_info, allow_missing=[])
         if lazy and output_path.exists():
@@ -144,6 +154,13 @@ def find_jobs(
     logger.info(msg)
 
     return jobs
+
+
+def ambiguous_job_claims(jobs: list[Job]) -> dict[Path, list[str]]:
+    claims: dict[Path, list[str]] = {}
+    for job in jobs:
+        claims.setdefault(job.input_path, []).append(job.gt_type)
+    return {path: names for path, names in claims.items() if len(names) > 1}
 
 
 def _process_video(
@@ -545,6 +562,14 @@ def pack_dataset(
             )
         )
 
+    ambiguous = ambiguous_job_claims(jobs)
+    if ambiguous:
+        raise ValueError(f"Files matched more than one data_type template: {ambiguous}")
+    if not jobs and not lazy:
+        raise ValueError(
+            f"No data_type template matched anything to pack in {input_folder}"
+        )
+
     execute_jobs(
         log_folder=output_folder
         / f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_cvdpack_pack",
@@ -608,6 +633,14 @@ def unpack_dataset(
                 match_video_folder=True,
                 missing_gt=missing_gt,
             )
+        )
+
+    ambiguous = ambiguous_job_claims(jobs)
+    if ambiguous:
+        raise ValueError(f"Files matched more than one data_type template: {ambiguous}")
+    if not jobs and not lazy:
+        raise ValueError(
+            f"No data_type template matched anything to unpack in {input_folder}"
         )
 
     execute_jobs(
@@ -914,11 +947,16 @@ def main():
         subset_keys = util.config_subset_keys(config)
     util.validate_subset_keys(subset, subset_keys)
 
+    # slurm args are scalars for submitit, not multi-valued filters like --subset
+    slurm_args = util.parse_dictlist_strings(args.slurm_args)
+    if slurm_args is not None:
+        slurm_args = {k: v[0] if len(v) == 1 else v for k, v in slurm_args.items()}
+
     dataset_jobprocess_kwargs = dict(
         steps=args.steps,
         config=config,
         parallel_mode=args.parallel_mode,
-        slurm_args=util.parse_dictlist_strings(args.slurm_args),
+        slurm_args=slurm_args,
         n_workers=args.n_workers,
         tmp_folder=args.tmp_folder,
         subset=subset,
