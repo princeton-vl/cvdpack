@@ -40,4 +40,6 @@ jobs:
           ffmpeg -version | head -1
       - run: uv sync --extra dev
       - name: Run tests
-        run: uv run pytest
+        run: uv run pytest --ignore=tests/test_steps_pipeline.py
+      - name: Steps pipeline equivalence
+        run: uv run pytest tests/test_steps_pipeline.py -q
