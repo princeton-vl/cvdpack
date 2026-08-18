@@ -1,5 +1,8 @@
 import logging
 import re
+import shutil
+import tempfile
+import time
 from pathlib import Path
 from string import Formatter
 from typing import Generator
@@ -157,7 +160,7 @@ def format_template(
         full_spec = match.group(1)
         key, _, spec = full_spec.partition(":")
         missing_msg = f"Missing {key=} in {vals=} for {template=}, {allow_missing=}"
-        if key not in vals and allow_missing and key not in allow_missing:
+        if key not in vals and allow_missing is not None and key not in allow_missing:
             raise ValueError(missing_msg)
         if key not in vals:
             return match.group(0)
@@ -253,3 +256,63 @@ def included_in_filter(
         for k, v in filter_vals.items()
     )
     return res
+
+
+def _folder_free_mb(candidate: Path) -> int | None:
+    try:
+        root = candidate
+        while not root.exists():
+            root = root.parent
+        free_mb = shutil.disk_usage(root).free // (1024 * 1024)
+    except OSError as e:
+        logger.info(f"Skipping {candidate}: {e}")
+        return None
+    return free_mb
+
+
+def select_tmp_folder(candidates: list[Path], min_space_mb: int) -> Path:
+    for candidate in candidates:
+        free_mb = _folder_free_mb(candidate)
+        if free_mb is None:
+            continue
+        if free_mb < min_space_mb:
+            logger.info(f"Skipping {candidate}: {free_mb}MB < {min_space_mb}MB")
+            continue
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            return Path(tempfile.mkdtemp(dir=candidate))
+        except OSError as e:
+            logger.info(f"Skipping {candidate}: {e}")
+
+    raise RuntimeError(
+        f"No usable tmp_folder found among candidates {candidates} "
+        f"(need {min_space_mb}MB free and write access)"
+    )
+
+
+def exited_jobs(jobs):
+    finished, crashed = [], []
+    for j in jobs:
+        if j.state in ["PENDING", "RUNNING"]:
+            continue
+        try:
+            j.result()
+            finished.append(j)
+        except Exception as e:
+            logger.error(f"Job {j.job_id} failed with error: {e}")
+            crashed.append(j)
+    return finished, crashed
+
+
+def wait_jobs(launched_jobs, pbar):
+    """Wait for a list of submitted jobs to complete, checking periodically."""
+    pending = list(launched_jobs)
+    all_crashed = []
+    while pending:
+        finished, crashed = exited_jobs(pending)
+        all_crashed += crashed
+        exited = {j.job_id for j in finished + crashed}
+        pending = [j for j in pending if j.job_id not in exited]
+        pbar.update(len(finished) + len(crashed))
+        time.sleep(1)
+    return all_crashed

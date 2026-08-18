@@ -24,13 +24,13 @@ def test_empty_input_errors_instead_of_writing_nothing(
     src = tmp_path / "src"
     src.mkdir()
     out = tmp_path / "out"
-    run = pack_dataset if action == "pack" else unpack_dataset
 
     if action == "unpack":
         (src / "cvdpack.json").write_text(json.dumps(CONFIG))
 
+    process = pack_dataset if action == "pack" else unpack_dataset
     with pytest.raises(ValueError, match="No data_type template matched"):
-        run(
+        process(
             src,
             out,
             steps=None,

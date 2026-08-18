@@ -41,24 +41,74 @@ def collect_unpack_jobs(root: Path, packed: dict[str, str]) -> list[Job]:
         search, out = decide_dataset_job_templates(
             root, root / "out", conf, None, mode="unpack"
         )
-        defaults = dict(
-            gt_type=gt_type,
-            subset=None,
-            tmp_folder=root / "tmp",
-            config=conf,
-            cpus_per_worker=1,
-            loglevel=None,
-        )
-        jobs += find_jobs(
+        found = find_jobs(
             input_template=search,
             output_template=out,
             gt_type=gt_type,
             subset=None,
-            job_defaults=defaults,
             match_video_folder=True,
             missing_gt="silent",
         )
+        jobs += [
+            Job(inp, outp, gt_type, root / "tmp", conf, 1, None) for inp, outp in found
+        ]
     return jobs
+
+
+def test_scalar_subset_values_are_normalized(tmp_path: Path) -> None:
+    make_tree(tmp_path, ["rgb-CameraLeft.mkv"])
+    found = find_jobs(
+        input_template=tmp_path / "{scene}/rgb-{cam}.mkv",
+        output_template=tmp_path / "out" / "{scene}/rgb-{cam}.mkv",
+        gt_type="rgb",
+        subset={"scene": SCENE},
+        missing_gt="silent",
+    )
+    assert len(found) == 1
+
+
+def test_repeated_numeric_field_across_the_folder_split(tmp_path: Path) -> None:
+    scene = tmp_path / "0001"
+    scene.mkdir()
+    (scene / "0001_left_000000.png").write_bytes(b"")
+    found = find_jobs(
+        input_template=tmp_path / "{scene:04d}" / "{scene}_{view}_{frame:06d}.png",
+        output_template=tmp_path / "out" / "{scene}" / "{view}_{frame:06d}.png",
+        gt_type="rgb",
+        match_video_folder=True,
+        missing_gt="silent",
+    )
+    assert len(found) == 1
+    assert "0001" in str(found[0][1])
+
+
+def test_plain_repeated_fields_must_match_exactly(tmp_path: Path) -> None:
+    scene = tmp_path / "0001"
+    scene.mkdir()
+    (scene / "1_left_000000.png").write_bytes(b"")
+    found = find_jobs(
+        input_template=tmp_path / "{scene}" / "{scene}_{view}_{frame:06d}.png",
+        output_template=tmp_path / "out" / "{scene}" / "{view}_{frame:06d}.png",
+        gt_type="rgb",
+        match_video_folder=True,
+        missing_gt="silent",
+    )
+    assert found == []
+
+
+def test_repeated_field_keeps_the_parent_spelling(tmp_path: Path) -> None:
+    scene = tmp_path / "0001"
+    scene.mkdir()
+    (scene / "0001_left_000000.png").write_bytes(b"")
+    found = find_jobs(
+        input_template=tmp_path / "{scene}" / "{scene:04d}_{view}_{frame:06d}.png",
+        output_template=tmp_path / "out" / "{scene}" / "{view}_{frame:06d}.png",
+        gt_type="rgb",
+        match_video_folder=True,
+        missing_gt="silent",
+    )
+    assert len(found) == 1
+    assert "/0001/" in str(found[0][1])
 
 
 def test_a_broad_literal_template_is_reported_as_ambiguous(tmp_path: Path) -> None:

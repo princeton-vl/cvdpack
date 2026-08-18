@@ -184,7 +184,7 @@ def test_unpacked_passthrough_matches(pipelines: dict) -> None:
     assert (pipelines["unpacked_b"] / "P000" / "meta.json").read_bytes() == original
 
 
-def test_combined_steps_in_one_call_is_rejected(
+def test_combined_steps_in_one_call_equals_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     src = tmp_path / "src"
@@ -193,13 +193,20 @@ def test_combined_steps_in_one_call_is_rejected(
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(CONFIG))
 
-    with pytest.raises(ValueError, match="Unhandled steps"):
-        _run_cvdpack(
-            monkeypatch,
-            "pack",
-            src,
-            tmp_path / "out",
-            tmp_path / "tmp",
-            config=config_path,
-            steps=["quantize", "pack_video"],
-        )
+    out = tmp_path / "out"
+    _run_cvdpack(
+        monkeypatch,
+        "pack",
+        src,
+        out,
+        tmp_path / "tmp",
+        config=config_path,
+        steps=["quantize", "pack_video"],
+    )
+
+    expected = {
+        Path("P000/depth.mkv"),
+        Path("P000/pose.npy"),
+        Path("P000/meta.json"),
+    }
+    assert _rel_files(out) == expected
