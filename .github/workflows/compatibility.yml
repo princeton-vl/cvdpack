@@ -1,0 +1,23 @@
+name: Compatibility tests
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lowest_versions:
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          python-version: "3.11"
+      - name: Install lowest supported test dependencies
+        run: |
+          uv venv --python 3.11
+          uv pip install --resolution lowest-direct -e ".[test]"
+      - name: Run unit tests
+        run: uv run --no-sync pytest

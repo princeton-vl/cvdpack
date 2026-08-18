@@ -23,8 +23,7 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: uv build
       - name: Frame tests
-
         # only run test_pack_frames since github probably wont have ffmpeg
-        run: uv run --isolated --no-project -p 3.13 --with dist/*.whl tests/test_pack_frames.py
+        run: uv run --isolated --no-project -p 3.13 --with pytest --with dist/*.whl -- pytest tests/test_pack_frames.py
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always

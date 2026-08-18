@@ -1,10 +1,11 @@
-from enum import Enum
-import numpy as np
 import logging
-from typing import Literal, Any
+from enum import Enum
 from pathlib import Path
+from typing import Any, Literal
 
-from .util import match_template_paths, format_template, load_any_image, save_any_image
+import numpy as np
+
+from .util import format_template, load_any_image, match_template_paths, save_any_image
 
 logger = logging.getLogger("cvdpack")
 
@@ -295,7 +296,9 @@ class CheckBoundsPacker(Packer):
         return img_packed.astype(self.from_dtype)
 
 
-def _cartesian_to_spherical(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _cartesian_to_spherical(
+    img: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Convert (H, W, 3) unit vectors to spherical angles. Returns (theta, phi, is_bg)."""
     if img.ndim != 3 or img.shape[2] != 3:
         raise ValueError(f"Expected (H, W, 3) float32, got {img.shape=}")
@@ -308,7 +311,9 @@ def _cartesian_to_spherical(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np
     return theta, phi, is_bg
 
 
-def _spherical_to_cartesian(theta: np.ndarray, phi: np.ndarray, is_bg: np.ndarray) -> np.ndarray:
+def _spherical_to_cartesian(
+    theta: np.ndarray, phi: np.ndarray, is_bg: np.ndarray
+) -> np.ndarray:
     """Convert spherical angles back to (H, W, 3) unit vectors."""
     x = (np.cos(phi) * np.cos(theta)).astype(np.float32)
     y = (np.cos(phi) * np.sin(theta)).astype(np.float32)
@@ -364,7 +369,6 @@ class UnitSphereAs2Int16Packer(Packer):
         theta[is_bg] = np.nan
         phi[is_bg] = np.nan
 
-        imax = np.iinfo(np.uint16).max
         theta_norm = (theta + np.pi) / (2 * np.pi)
         phi_norm = (phi + np.pi / 2) / np.pi
 

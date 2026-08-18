@@ -1,8 +1,9 @@
 import argparse
-import numpy as np
-from pathlib import Path
-import matplotlib.pyplot as plt
 import logging
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 from . import util
 
