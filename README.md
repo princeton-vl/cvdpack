@@ -74,6 +74,28 @@ uvx cvdpack copy --input data/TartanAir/{scene}/{split}/{vid}/{gt_type}_{cam}/{f
 ```
 Note: currently struggles to do the whole dataset for some dataset layouts e.g. TartanAir which stores many gt types in the same folder (flow and mask).
 
+#### Download a subset of a packed dataset from HuggingFace
+
+`--input` accepts a HuggingFace dataset URL for `unpack` and `copy`. Hugging Face Hub support is included in the standard installation.
+
+```bash
+# download only the packed files you asked for, and leave them packed
+uvx cvdpack copy \
+  --input https://huggingface.co/datasets/princeton-vl/infinigen2.0.0a2-stereo-indoors \
+  --output indoorsc_packed \
+  --subset scene=30377061_0 traj=0 gt_type=depth,rgb cam=CameraLeft
+
+# download those same files and unpack them in one step
+uvx cvdpack unpack \
+  --input https://huggingface.co/datasets/princeton-vl/infinigen2.0.0a2-stereo-indoors \
+  --output indoorsc_unpacked \
+  --tmp_folder indoorsc_tmp \
+  --hf_staging upfront \
+  --subset scene=30377061_0 traj=0 gt_type=depth,rgb cam=CameraLeft
+```
+
+The URL may include `/tree/<revision>` or a subpath. Only files selected by `--subset` are downloaded; `copy` saves them directly to `--output`, while `unpack` stages them in `--tmp_folder`, or in the system temporary directory if you give none, and removes the staged download once unpacking finishes. Unpacking a URL requires choosing `--hf_staging`: `upfront` downloads everything before processing, while `per_job` has each worker download and then delete only its own inputs — preferred for `--parallel_mode slurm`, where workers otherwise cannot see files staged on the submit host, and for datasets larger than your scratch space. The subset keys are the path-template fields declared in the dataset's `cvdpack.json`; use comma-separated values to select more than one value.
+
 ## Dataset packing / unpacking examples
 
 All commands will assume packing via multiprocessing, but we recommend using a slurm cluster for larger datasets.

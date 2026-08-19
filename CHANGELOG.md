@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.7.0
+
+### New Features
+
+- `copy` and `unpack` accept Hugging Face dataset URLs, revisions, and subpaths with Hub support installed by default, downloading only files selected by `--subset`
+- Hugging Face unpacking supports explicit upfront or per-job staging, validates SLURM scratch visibility, and removes staged data after success or failure
+- Hugging Face inputs validate configs and empty subset matches before bulk transfer, retain the effective config, and record the source URL in unpacked metadata
+
+### Fixed wrong results
+
+- Local pack and unpack apply OR semantics to comma-separated subset values, including values containing path separators
+- Local subset filters match integer template fields without conflating zero-padded strings
+
+### Other
+
+- `copy` no longer requires FFmpeg when it performs no video processing
+
 ## v0.6.0
 
 ### Breaking changes

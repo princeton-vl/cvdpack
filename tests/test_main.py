@@ -1,11 +1,229 @@
+import argparse
+import getpass
 import itertools
 import json
 import logging
+import types
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
-from cvdpack import main, util
+from cvdpack import huggingface, main, util
+
+CONFIG_WITH_METADATA = {
+    "metadata": {
+        "compatibility_version": main.compatibility_version,
+        "cvdpack_version": main.__version__,
+    },
+    "data_types": {
+        "rgb": {
+            "original_path_template": "{scene}/{frame:04d}.png",
+            "packed_path_template": "{scene}/rgb.mkv",
+        }
+    },
+}
+
+
+def unpack_args(tmp_path: Path, tmp_folder: list[Path] | None) -> argparse.Namespace:
+    return argparse.Namespace(
+        action="unpack",
+        config=None,
+        hf_staging=None,
+        input=str(tmp_path / "packed"),
+        min_tmp_folder_space_mb=0,
+        n_workers=None,
+        output=tmp_path / "unpacked",
+        parallel_mode="none",
+        steps=[],
+        tmp_folder=tmp_folder,
+    )
+
+
+def test_validate_args_keeps_default_unpack_tmp_folder_outside_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    system_tmp = tmp_path / "system_tmp"
+    monkeypatch.setattr(main.tempfile, "gettempdir", lambda: str(system_tmp))
+    _, _, tmp_folder, _ = main.validate_args(unpack_args(tmp_path, None))
+
+    assert tmp_folder is not None
+    assert tmp_folder.is_dir()
+    assert tmp_folder.parent == system_tmp / f"cvdpack_{getpass.getuser()}"
+
+
+def test_validate_args_requires_shared_tmp_for_upfront_slurm(tmp_path: Path) -> None:
+    args = unpack_args(tmp_path, None)
+    args.input = "https://huggingface.co/datasets/org/dataset"
+    args.parallel_mode = "slurm"
+    args.hf_staging = "upfront"
+
+    with pytest.raises(ValueError, match="shared storage"):
+        main.validate_args(args)
+
+
+def test_validate_args_requires_an_explicit_hf_staging_choice(tmp_path: Path) -> None:
+    args = unpack_args(tmp_path, None)
+    args.input = "https://huggingface.co/datasets/org/dataset"
+
+    with pytest.raises(ValueError, match="hf_staging"):
+        main.validate_args(args)
+
+
+def test_validate_args_accepts_per_job_slurm_without_tmp(tmp_path: Path) -> None:
+    args = unpack_args(tmp_path, None)
+    args.input = "https://huggingface.co/datasets/org/dataset"
+    args.parallel_mode = "slurm"
+    args.hf_staging = "per_job"
+
+    _, _, _, hf_source = main.validate_args(args)
+
+    assert hf_source == ("org/dataset", "main", "")
+
+
+def test_process_video_job_fetches_and_cleans_a_remote_input(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_path = tmp_path / "staging" / "poses.txt"
+    input_path.parent.mkdir(parents=True)
+    input_path.touch()
+
+    def fake_fetch(remote: dict, path: Path) -> None:
+        path.write_text("1.0 2.0")
+
+    monkeypatch.setattr(main.huggingface, "fetch_job_input", fake_fetch)
+    job = main.Job(
+        input_path=input_path,
+        output_path=tmp_path / "out/poses.txt",
+        gt_type="metadata",
+        tmp_folder=tmp_path / "tmp",
+        config={},
+        cpus_per_worker=None,
+        loglevel=logging.WARNING,
+        remote={"repo_id": "org/dataset", "revision": "main", "dest": str(tmp_path)},
+    )
+
+    main.process_video_job(job)
+
+    assert job.output_path.read_text() == "1.0 2.0"
+    assert not input_path.exists()
+
+
+def test_find_jobs_matches_integer_subset_values(tmp_path: Path) -> None:
+    for scene in ["1", "2", "3"]:
+        path = tmp_path / "staged" / scene / "camera.npz"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+
+    jobs = main.find_jobs(
+        input_template=tmp_path / "staged/{scene}/camera.npz",
+        output_template=tmp_path / "out/{scene}/camera.npz",
+        gt_type="camera",
+        subset={"scene": [1, 2]},
+        missing_gt="silent",
+    )
+
+    assert [inp.parent.name for inp, _ in jobs] == ["1", "2"]
+
+
+def test_find_jobs_expanded_separator_values_have_or_semantics(tmp_path: Path) -> None:
+    path = tmp_path / "packed" / "id" / "id_traj0" / "camera.npz"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"")
+
+    jobs = main.find_jobs(
+        tmp_path / "packed/{scene}/camera.npz",
+        tmp_path / "out/{scene}/camera.npz",
+        "camera",
+        {"scene": ["id/id_traj0", "typo/typo_traj0"]},
+    )
+
+    assert len(jobs) == 1
+
+
+def test_find_jobs_lazy_separator_values_still_error_when_nothing_exists(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "packed").mkdir()
+
+    with pytest.raises(ValueError, match="No jobs found"):
+        main.find_jobs(
+            tmp_path / "packed/{scene}/camera.npz",
+            tmp_path / "out/{scene}/camera.npz",
+            "camera",
+            {"scene": ["id/id_traj0", "id2/id2_traj0"]},
+            lazy=True,
+        )
+
+
+def test_find_jobs_lazy_separator_values_skip_existing_outputs(
+    tmp_path: Path,
+) -> None:
+    for root in ["packed", "out"]:
+        path = tmp_path / root / "id" / "id_traj0" / "camera.npz"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+
+    jobs = main.find_jobs(
+        tmp_path / "packed/{scene}/camera.npz",
+        tmp_path / "out/{scene}/camera.npz",
+        "camera",
+        {"scene": ["id/id_traj0", "id2/id2_traj0"]},
+        lazy=True,
+    )
+
+    assert jobs == []
+
+
+def test_process_video_job_cleans_a_remote_input_when_processing_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_path = tmp_path / "staging" / "data.foo"
+    input_path.parent.mkdir(parents=True)
+    input_path.touch()
+
+    def fake_fetch(remote: dict, path: Path) -> None:
+        path.write_bytes(b"data")
+
+    monkeypatch.setattr(main.huggingface, "fetch_job_input", fake_fetch)
+    job = main.Job(
+        input_path=input_path,
+        output_path=tmp_path / "out/data.bar",
+        gt_type="rgb",
+        tmp_folder=tmp_path / "tmp",
+        config={},
+        cpus_per_worker=None,
+        loglevel=logging.WARNING,
+        remote={"repo_id": "org/dataset", "revision": "main", "dest": str(tmp_path)},
+    )
+
+    with pytest.raises(ValueError, match="Invalid"):
+        main.process_video_job(job)
+
+    assert not input_path.exists()
+
+
+def test_validate_args_skips_the_ffmpeg_probe_for_copy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    probe = mock.Mock(side_effect=FileNotFoundError("ffmpeg"))
+    monkeypatch.setattr(main.subprocess, "run", probe)
+    args = unpack_args(tmp_path, None)
+    args.action = "copy"
+    args.steps = None
+    args.n_workers = None
+
+    main.validate_args(args)
+
+    probe.assert_not_called()
+
+
+def test_validate_args_prefers_an_explicit_tmp_folder(tmp_path: Path) -> None:
+    _, _, tmp_folder, _ = main.validate_args(
+        unpack_args(tmp_path, [tmp_path / "scratch"])
+    )
+
+    assert tmp_folder.parent == tmp_path / "scratch"
 
 
 def _find_jobs(
@@ -187,6 +405,29 @@ def test_find_jobs_keeps_zero_padded_multivalue_output_names(tmp_path: Path) -> 
     assert {out.parts[-4] for _, out in jobs} == {"0001", "scene-a"}
 
 
+def test_find_jobs_expands_multivalue_fields_with_path_separators(
+    tmp_path: Path,
+) -> None:
+    scenes = ["id/id_traj0", "id2/id2_traj0", "other/other_traj0"]
+    for scene in scenes:
+        path = tmp_path / "packed" / scene / "camera.npz"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+
+    jobs = main.find_jobs(
+        tmp_path / "packed/{scene}/camera.npz",
+        tmp_path / "out/{scene}/camera.npz",
+        "camera",
+        {"scene": scenes[:2]},
+        missing_gt="silent",
+    )
+
+    assert [str(inp.relative_to(tmp_path / "packed")) for inp, _ in jobs] == [
+        "id/id_traj0/camera.npz",
+        "id2/id2_traj0/camera.npz",
+    ]
+
+
 def test_find_jobs_filters_discovered_filename_groups(tmp_path: Path) -> None:
     _stage_views(tmp_path)
 
@@ -298,6 +539,25 @@ def test_format_template_keeps_zero_padded_string_unspecced() -> None:
     assert util.format_template("{scene}/x.png", {"scene": "0001"}) == "0001/x.png"
 
 
+def test_find_jobs_matches_zero_padded_numeric_subset_list(tmp_path: Path) -> None:
+    for scene in ["0001", "0002", "0003"]:
+        path = tmp_path / "staged" / scene / "camera.npz"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+
+    subset = util.parse_dictlist_strings(["scene=0001,0002"])
+    jobs = main.find_jobs(
+        input_template=tmp_path / "staged/{scene:04d}/camera.npz",
+        output_template=tmp_path / "out/{scene:04d}/camera.npz",
+        gt_type="camera",
+        subset=subset,
+        missing_gt="silent",
+    )
+
+    assert [inp.parent.name for inp, _ in jobs] == ["0001", "0002"]
+    assert [out.parent.name for _, out in jobs] == ["0001", "0002"]
+
+
 def _copy_argv(input_folder: Path, output_folder: Path) -> list[str]:
     return [
         "cvdpack",
@@ -372,6 +632,202 @@ def test_copy_rejects_an_explicit_config(tmp_path: Path, monkeypatch) -> None:
         main.main()
 
     assert not output_folder.exists()
+
+
+def test_remote_copy_accepts_and_reads_an_explicit_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "external.json"
+    config_path.write_text(json.dumps(CONFIG_WITH_METADATA))
+    output = tmp_path / "output"
+    download = mock.Mock(return_value=(output, config_path, None))
+    monkeypatch.setattr(main.huggingface, "download_input", download)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cvdpack",
+            "copy",
+            "--input",
+            "https://huggingface.co/datasets/org/dataset",
+            "--output",
+            str(output),
+            "--config",
+            str(config_path),
+            "--subset",
+            "scene=scene-a",
+            "gt_type=rgb",
+            "--steps",
+        ],
+    )
+
+    main.main()
+
+    download.assert_called_once()
+
+
+def test_main_unpacks_a_remote_dataset_per_job(tmp_path: Path, monkeypatch) -> None:
+    camera_conf = {
+        "original_path_template": "{scene}/camera.npz",
+        "packed_path_template": "{scene}/camera.npz",
+    }
+    config = {
+        "metadata": {
+            "compatibility_version": main.compatibility_version,
+            "cvdpack_version": main.__version__,
+        },
+        "data_types": {"camera": camera_conf},
+    }
+    config_path = tmp_path / "remote_config.json"
+    config_path.write_text(json.dumps(config))
+
+    def fake_download(repo_id, file, repo_type, revision, local_dir):
+        if file == "cvdpack.json":
+            return str(config_path)
+        target = Path(local_dir) / file
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"data")
+        return str(target)
+
+    hub = types.ModuleType("huggingface_hub")
+    hub.hf_hub_download = mock.Mock(side_effect=fake_download)
+    hub.list_repo_files = mock.Mock(return_value=["cvdpack.json", "scene-a/camera.npz"])
+    hub.snapshot_download = mock.Mock()
+    monkeypatch.setattr(huggingface, "huggingface_hub", hub)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cvdpack",
+            "unpack",
+            "--input",
+            "https://huggingface.co/datasets/org/dataset",
+            "--output",
+            str(tmp_path / "out"),
+            "--tmp_folder",
+            str(tmp_path / "scratch"),
+            "--hf_staging",
+            "per_job",
+        ],
+    )
+
+    main.main()
+
+    assert (tmp_path / "out" / "scene-a" / "camera.npz").read_bytes() == b"data"
+    hub.snapshot_download.assert_not_called()
+    leftovers = [p for p in (tmp_path / "scratch").rglob("*") if p.is_file()]
+    assert leftovers == []
+    written = json.loads((tmp_path / "out" / "cvdpack.json").read_text())
+    source = written["metadata"]["original_folder"]
+    assert source == "https://huggingface.co/datasets/org/dataset"
+
+
+def test_main_cleans_staging_when_a_remote_unpack_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    camera_conf = {
+        "original_path_template": "{scene}/camera.npz",
+        "packed_path_template": "{scene}/camera.npz",
+    }
+    config = {
+        "metadata": {
+            "compatibility_version": main.compatibility_version,
+            "cvdpack_version": main.__version__,
+        },
+        "data_types": {"camera": camera_conf},
+    }
+    config_path = tmp_path / "remote_config.json"
+    config_path.write_text(json.dumps(config))
+
+    def fake_download(repo_id, file, repo_type, revision, local_dir):
+        if file == "cvdpack.json":
+            return str(config_path)
+        raise RuntimeError("download failed")
+
+    hub = types.ModuleType("huggingface_hub")
+    hub.hf_hub_download = mock.Mock(side_effect=fake_download)
+    hub.list_repo_files = mock.Mock(return_value=["cvdpack.json", "scene-a/camera.npz"])
+    hub.snapshot_download = mock.Mock()
+    monkeypatch.setattr(huggingface, "huggingface_hub", hub)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cvdpack",
+            "unpack",
+            "--input",
+            "https://huggingface.co/datasets/org/dataset",
+            "--output",
+            str(tmp_path / "out"),
+            "--tmp_folder",
+            str(tmp_path / "scratch"),
+            "--hf_staging",
+            "per_job",
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="download failed"):
+        main.main()
+
+    leftovers = [p for p in (tmp_path / "scratch").rglob("*") if p.is_file()]
+    assert leftovers == []
+
+
+def test_main_cleans_staging_when_the_upfront_download_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "remote_config.json"
+    config_path.write_text(json.dumps(CONFIG_WITH_METADATA))
+
+    hub = types.ModuleType("huggingface_hub")
+    hub.hf_hub_download = mock.Mock(return_value=str(config_path))
+    hub.list_repo_files = mock.Mock(return_value=["cvdpack.json", "scene-a/rgb.mkv"])
+    hub.snapshot_download = mock.Mock(side_effect=RuntimeError("network interrupted"))
+    monkeypatch.setattr(huggingface, "huggingface_hub", hub)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cvdpack",
+            "unpack",
+            "--input",
+            "https://huggingface.co/datasets/org/dataset",
+            "--output",
+            str(tmp_path / "out"),
+            "--tmp_folder",
+            str(tmp_path / "scratch"),
+            "--hf_staging",
+            "upfront",
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="network interrupted"):
+        main.main()
+
+    leftovers = [p for p in (tmp_path / "scratch").rglob("*") if p.is_file()]
+    assert leftovers == []
+
+
+def test_main_rejects_unknown_local_unpack_subset(tmp_path: Path, monkeypatch) -> None:
+    packed = tmp_path / "packed"
+    packed.mkdir()
+    (packed / "cvdpack.json").write_text(json.dumps(CONFIG_WITH_METADATA))
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cvdpack",
+            "unpack",
+            "--input",
+            str(packed),
+            "--output",
+            str(tmp_path / "output"),
+            "--tmp_folder",
+            str(tmp_path / "scratch"),
+            "--subset",
+            "sceen=scene-a",
+            "--steps",
+            "quantize",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="sceen.*scene"):
+        main.main()
 
 
 def _job(input_path: Path, output_path: Path) -> main.Job:

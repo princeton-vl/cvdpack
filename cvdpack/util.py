@@ -58,6 +58,8 @@ def save_any_image(
 
 
 def template_to_regex(template: Path, allow_any: list[str] | None = None) -> re.Pattern:
+    if allow_any is None:
+        allow_any = []
     fmt = Formatter()
 
     found_keys = set()
@@ -233,6 +235,25 @@ def validate_subset_keys(subset: dict | None, allowed: set[str]) -> None:
         )
 
 
+def as_list(val: object) -> list:
+    if isinstance(val, (list, set, tuple)):
+        return list(val)
+    return [val]
+
+
+def matches_filter_value(file_value: object, filter_value: object) -> bool:
+    for value in as_list(filter_value):
+        if file_value == value:
+            return True
+        # two string spellings must match exactly; numbers bridge int vs digit-string
+        if isinstance(file_value, str) and isinstance(value, str):
+            continue
+        a, b = str(file_value), str(value)
+        if a.isdigit() and b.isdigit() and int(a) == int(b):
+            return True
+    return False
+
+
 def included_in_filter(
     file_keys: dict,
     filter_vals: dict[str, list] | None,
@@ -252,7 +273,7 @@ def included_in_filter(
         )
 
     res = all(
-        k not in file_keys or str(file_keys[k]) in [str(x) for x in v]
+        (k not in file_keys or matches_filter_value(file_keys[k], v))
         for k, v in filter_vals.items()
     )
     return res
