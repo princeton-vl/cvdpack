@@ -7,6 +7,7 @@
 # - Alexander Raistrick <araistrick@princeton.edu>
 
 import argparse
+import getpass
 import json
 import logging
 import multiprocessing
@@ -23,7 +24,7 @@ from typing import Callable, Literal
 import numpy as np
 from tqdm import tqdm
 
-from cvdpack import __version__, compatibility_version, pack_frames, util
+from cvdpack import __version__, compatibility_version, huggingface, pack_frames, util
 from cvdpack.pack_timeseries import (
     pack_tarball,
     pack_video,
@@ -51,6 +52,7 @@ class Job:
     config: dict
     cpus_per_worker: int | None
     loglevel: int | None
+    remote: dict | None = None
 
 
 def _values_agree(a: object, b: object) -> bool:
@@ -114,10 +116,7 @@ def find_jobs(
 ) -> list[tuple[Path, Path]]:
     if subset is None:
         subset = {}
-    subset = {
-        k: list(v) if isinstance(v, (list, tuple, set)) else [v]
-        for k, v in subset.items()
-    }
+    subset = {k: util.as_list(v) for k, v in subset.items()}
     if gt_type not in subset.get("gt_type", [gt_type]):
         return []
 
@@ -135,6 +134,31 @@ def find_jobs(
             f"--subset {frame_subset} cannot select frames from {input_template}, "
             "which packs a whole sequence into a single file"
         )
+
+    # a value spanning a path separator cannot match per-component, so it gets its own search
+    expandable = sorted(
+        k
+        for k, v in subset.items()
+        if len(v) > 1 and any("/" in str(x) or "\\" in str(x) for x in v)
+    )
+    if expandable:
+        jobs = []
+        for value in subset[expandable[0]]:
+            narrowed = {**subset, expandable[0]: [value]}
+            args = (input_template, output_template, gt_type, narrowed)
+            # filters have OR semantics, so only the aggregate decides missing_gt
+            jobs += find_jobs(*args, match_video_folder, lazy, "silent")
+        if jobs:
+            return jobs
+        # an empty aggregate is fine under --lazy only if inputs exist and were skipped
+        args = (input_template, output_template, gt_type, subset)
+        if lazy and find_jobs(*args, match_video_folder, False, "silent"):
+            return jobs
+        if missing_gt == "error":
+            raise ValueError(f"No jobs found for {input_template} with {subset=}")
+        if missing_gt == "warn":
+            logger.warning(f"No jobs found for {input_template}, skipping")
+        return jobs
 
     # multi-valued keys stay filters; gt_type stays a field so it cannot reopen the greedy match
     fill = {k: v[0] for k, v in subset.items() if len(v) == 1 and k != "gt_type"}
@@ -322,16 +346,27 @@ def _process_video(job: Job, tmp_folder: Path) -> None:
     raise ValueError(f"Invalid {input_path.suffix=} {output_path.suffix=}")
 
 
+def _process_job_in_tmp(job: Job) -> None:
+    with tempfile.TemporaryDirectory(dir=job.tmp_folder) as tmp:
+        tmp_path = Path(tmp)
+        logger.debug(f"Using {tmp_path=} for {job.input_path=} -> {job.output_path=}")
+        _process_video(job, tmp_path)
+
+
 def process_video_job(job: Job) -> None:
     if "{" not in str(job.output_path.parent):
         job.output_path.parent.mkdir(parents=True, exist_ok=True)
     if job.tmp_folder is not None:
         job.tmp_folder.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(dir=job.tmp_folder) as tmp:
-        tmp_path = Path(tmp)
-        logger.debug(f"Using {tmp_path=} for {job.input_path=} -> {job.output_path=}")
-        _process_video(job, tmp_path)
+    try:
+        if job.remote is not None:
+            huggingface.fetch_job_input(job.remote, job.input_path)
+        _process_job_in_tmp(job)
+    finally:
+        # a worker-staged download is scratch data, reclaimed even when the job fails
+        if job.remote is not None:
+            job.input_path.unlink(missing_ok=True)
 
     print(job.input_path, job.output_path)
 
@@ -500,6 +535,7 @@ def _process_dataset(
     missing_gt: str = "error",
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
+    remote: dict | None = None,
 ) -> None:
     if config is None:
         raise ValueError(
@@ -521,10 +557,8 @@ def _process_dataset(
             match_video_folder=True,
             missing_gt=missing_gt,
         )
-        jobs += [
-            Job(inp, out, gt_type, tmp_folder, datatype_conf, cpus_per_worker, loglevel)
-            for inp, out in found
-        ]
+        args = (gt_type, tmp_folder, datatype_conf, cpus_per_worker, loglevel, remote)
+        jobs += [Job(inp, out, *args) for inp, out in found]
 
     validate_jobs(jobs)
     ambiguous = ambiguous_job_claims(jobs)
@@ -561,6 +595,7 @@ def pack_dataset(
     missing_gt: str = "error",
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
+    remote: dict | None = None,
 ) -> None:
     _process_dataset(
         input_folder,
@@ -577,6 +612,7 @@ def pack_dataset(
         missing_gt=missing_gt,
         cpus_per_worker=cpus_per_worker,
         loglevel=loglevel,
+        remote=remote,
     )
 
 
@@ -595,6 +631,7 @@ def unpack_dataset(
     missing_gt: str = "error",
     cpus_per_worker: int | None = None,
     loglevel: int | None = None,
+    remote: dict | None = None,
 ) -> None:
     _process_dataset(
         input_folder,
@@ -611,19 +648,42 @@ def unpack_dataset(
         missing_gt=missing_gt,
         cpus_per_worker=cpus_per_worker,
         loglevel=loglevel,
+        remote=remote,
     )
 
 
 def validate_args(args: argparse.Namespace):
-    if args.config is not None and args.config.parts[0] == "presets":
-        args.config = Path(__file__).parent / args.config
+    config_path = args.config
+    if config_path is not None and config_path.parts[0] == "presets":
+        config_path = Path(__file__).parent / config_path
+    hf_source = huggingface.parse_input(args.input)
+    input_path = Path(args.input) if hf_source is None else None
+    if hf_source is not None and args.action == "pack":
+        raise ValueError(
+            f"{args.action=} needs local input files but {args.input=} is a huggingface url. "
+            "Use unpack to download and unpack, or copy to download the packed files as-is"
+        )
+    if hf_source is not None and args.action == "unpack" and args.hf_staging is None:
+        raise ValueError(
+            "A huggingface --input requires choosing --hf_staging: upfront downloads "
+            "everything before processing, per_job has each worker download and then "
+            "delete only its own inputs"
+        )
+    upfront_slurm = args.parallel_mode == "slurm" and args.hf_staging == "upfront"
+    if hf_source is not None and upfront_slurm and args.tmp_folder is None:
+        raise ValueError(
+            "--hf_staging upfront with --parallel_mode slurm requires --tmp_folder on "
+            "shared storage, since compute nodes cannot read the submit host's default "
+            "temporary directory. Omit --hf_staging to let each worker download its "
+            "own inputs instead"
+        )
 
     if args.n_workers is not None and args.action == "copy":
         raise ValueError(
             f"{args.parallel_mode=} {args.n_workers=} doesnt currently work for {args.action=}."
         )
 
-    avoids_ffmpeg = (
+    avoids_ffmpeg = args.action == "copy" or (
         args.steps is not None
         and len(set(args.steps).intersection({"pack_video", "unpack_video"})) == 0
     )
@@ -644,12 +704,16 @@ def validate_args(args: argparse.Namespace):
             f"Set {util.ENVIRON_KEYS['array_max']} to a larger value if this is appropriate for your cluster"
         )
 
-    if args.tmp_folder is not None:
-        args.tmp_folder = util.select_tmp_folder(
-            args.tmp_folder, args.min_tmp_folder_space_mb
-        )
+    tmp_folder = None
+    candidates = args.tmp_folder
+    if candidates is None and args.action == "unpack":
+        # a fixed parent under /tmp would be owned by whichever user ran first
+        subfolder = f"cvdpack_{getpass.getuser()}"
+        candidates = [Path(tempfile.gettempdir()) / subfolder]
+    if candidates is not None:
+        tmp_folder = util.select_tmp_folder(candidates, args.min_tmp_folder_space_mb)
 
-    return args
+    return input_path, config_path, tmp_folder, hf_source
 
 
 def parse_args():
@@ -670,7 +734,14 @@ def parse_args():
             "copy",
         ],
     )
-    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument(
+        "--input",
+        type=str,
+        required=True,
+        help="A local folder, or a huggingface dataset url such as "
+        "https://huggingface.co/datasets/<org>/<name>[/tree/<revision>[/<subpath>]]. "
+        "Huggingface urls are valid for unpack and copy, and download only what --subset selects.",
+    )
     parser.add_argument("--output", type=Path, required=True)
 
     parser.add_argument(
@@ -717,7 +788,22 @@ def parse_args():
             "e.g. scene=xyz, cam=left, etc."
         ),
     )
-    parser.add_argument("--tmp_folder", type=Path, default=None, nargs="+")
+    parser.add_argument(
+        "--tmp_folder",
+        type=Path,
+        default=None,
+        nargs="+",
+        help="Scratch folders for intermediate files, the first with enough free space is used. "
+        "Unpack defaults to the system temporary directory.",
+    )
+    parser.add_argument(
+        "--hf_staging",
+        choices=["upfront", "per_job"],
+        default=None,
+        help="Whether a huggingface --input is downloaded once before processing, or "
+        "fetched by each worker for just its own job and deleted afterwards. "
+        "Required when unpacking a huggingface url.",
+    )
     parser.add_argument(
         "--min_tmp_folder_space_mb",
         type=int,
@@ -756,7 +842,7 @@ def parse_args():
         help="Skip verifying our cvdpack version against the version from any input configs",
     )
 
-    return validate_args(parser.parse_args())
+    return parser.parse_args()
 
 
 def copy_files(
@@ -828,10 +914,31 @@ def format_for_json(obj):
     return obj
 
 
+def _run_action(
+    args: argparse.Namespace,
+    input_path: Path,
+    subset: dict | None,
+    job_kwargs: dict,
+    hf_source: tuple | None,
+) -> None:
+    match args.action:
+        case "pack":
+            pack_dataset(input_path, args.output, **job_kwargs)
+        case "unpack":
+            unpack_dataset(input_path, args.output, **job_kwargs)
+        case "copy" if hf_source is not None:
+            logger.info(f"Downloaded packed files to {args.output}")
+        case "copy":
+            copy_files(input_path, args.output, subset=subset, loglevel=args.loglevel)
+        case _:
+            raise ValueError(f"Invalid {args.action=}")
+
+
 def main():
     start_time = time.time()
 
     args = parse_args()
+    input_path, config_path, tmp_folder, hf_source = validate_args(args)
 
     logging.basicConfig(
         level=args.loglevel,
@@ -841,17 +948,91 @@ def main():
     )
     logger.setLevel(args.loglevel)
 
-    config_path = args.config
-    if config_path is None:
-        config_path = args.input / "cvdpack.json"
+    subset = util.parse_dictlist_strings(args.subset)
+    hf_remote = None
+    hf_staging = None
+    if hf_source is not None:
+        hf_staging = (
+            args.output
+            if args.action == "copy"
+            else (tmp_folder or args.output) / "hf_download"
+        )
+    try:
+        if hf_source is not None:
+            staging = (args, config_path, subset, hf_source, hf_staging)
+            input_path, config_path, hf_remote = _stage_remote_input(*staging)
+        run_args = (args, input_path, config_path, subset, tmp_folder)
+        config = _load_config_and_run(*run_args, hf_source, hf_remote)
+    finally:
+        # staged downloads are scratch data; the unpacked output stands alone
+        if hf_source is not None and args.action != "copy":
+            shutil.rmtree(hf_staging, ignore_errors=True)
 
-    if args.action == "copy" and args.config is not None:
+    if args.action == "copy" or config is None:
+        return
+
+    metadata = config.setdefault("metadata", {})
+    metadata["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    metadata["cvdpack_version"] = __version__
+    metadata["compatibility_version"] = compatibility_version
+    metadata["args"] = vars(args)
+    metadata["environment"] = {
+        k: os.environ.get(v) for k, v in util.ENVIRON_KEYS.items()
+    }
+    metadata["pack_runtime"] = time.time() - start_time
+
+    if args.action in {"pack", "unpack"}:
+        # staging folders get deleted, so record the url the data actually came from
+        source = args.input if hf_source is not None else str(input_path)
+        metadata["original_folder"] = source
+        metadata["packed_folder"] = str(args.output)
+        logger.info(f"Adding metadata to {args.output / 'cvdpack.json'}")
+        with (args.output / "cvdpack.json").open("w") as f:
+            json.dump(config, f, indent=2, default=format_for_json)
+
+    logger.info(
+        f"Completed {args.action} for {args.subset=} {args.output} in {time.time() - start_time:.2f}s"
+    )
+
+
+def _stage_remote_input(
+    args: argparse.Namespace,
+    config_path: Path | None,
+    subset: dict | None,
+    hf_source: tuple,
+    hf_staging: Path,
+) -> tuple[Path, Path, dict | None]:
+    staging_mode = "upfront" if args.action == "copy" else args.hf_staging
+    return huggingface.download_input(
+        hf_source,
+        hf_staging,
+        config_path,
+        subset,
+        compatibility_version,
+        staging=staging_mode,
+    )
+
+
+def _load_config_and_run(
+    args: argparse.Namespace,
+    input_path: Path | None,
+    config_path: Path | None,
+    subset: dict | None,
+    tmp_folder: Path | None,
+    hf_source: tuple | None,
+    hf_remote: dict | None,
+) -> dict | None:
+    if config_path is None:
+        config_path = input_path / "cvdpack.json"
+
+    local_copy = args.action == "copy" and hf_source is None
+    if local_copy and args.config is not None:
         raise ValueError(
             f"--config={args.config} was provided but copy does not read a config"
         )
 
-    # copy never reads the config; version compatibility matters at unpack time
-    if args.action == "copy":
+    # local copy never reads the config; version compatibility matters at unpack time
+    if local_copy:
         config = None
         config_version = None
         compat_version = None
@@ -878,10 +1059,8 @@ def main():
             f"This should be safe since {compatibility_version=} matched correctly, but there is a minute chance the compatibility version could be misconfigured"
         )
 
-    subset = util.parse_dictlist_strings(args.subset)
-
     # copy_files filters on the --input/--output templates, ignoring any config
-    if args.action == "copy":
+    if local_copy:
         subset_keys = util.template_fields(args.input) | util.template_fields(
             args.output
         )
@@ -900,52 +1079,22 @@ def main():
         parallel_mode=args.parallel_mode,
         slurm_args=slurm_args,
         n_workers=args.n_workers,
-        tmp_folder=args.tmp_folder,
+        tmp_folder=tmp_folder,
         subset=subset,
         lazy=args.lazy,
         missing_gt=args.missing_gt,
         cpus_per_worker=args.cpus_per_worker,
         loglevel=args.loglevel,
+        remote=hf_remote,
     )
 
-    if args.action != "copy" and not args.input.is_dir():
+    if args.action != "copy" and not input_path.is_dir():
         raise ValueError(
-            f"{args.action} requires input to be a directory: {args.input=}"
+            f"{args.action} requires input to be a directory: {input_path=}"
         )
 
-    match args.action:
-        case "pack":
-            pack_dataset(args.input, args.output, **job_kwargs)
-        case "unpack":
-            unpack_dataset(args.input, args.output, **job_kwargs)
-        case "copy":
-            copy_files(args.input, args.output, subset=subset, loglevel=args.loglevel)
-        case _:
-            raise ValueError(f"Invalid {args.action=}")
-
-    if args.action == "copy" or config is None:
-        return
-
-    metadata = config.setdefault("metadata", {})
-    metadata["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    metadata["cvdpack_version"] = __version__
-    metadata["compatibility_version"] = compatibility_version
-    metadata["args"] = vars(args)
-    metadata["environment"] = {
-        k: os.environ.get(v) for k, v in util.ENVIRON_KEYS.items()
-    }
-    metadata["pack_runtime"] = time.time() - start_time
-
-    if args.action in {"pack", "unpack"}:
-        metadata["original_folder"] = str(args.input)
-        metadata["packed_folder"] = str(args.output)
-        logger.info(f"Adding metadata to {args.output / 'cvdpack.json'}")
-        with (args.output / "cvdpack.json").open("w") as f:
-            json.dump(config, f, indent=2, default=format_for_json)
-
-    logger.info(
-        f"Completed {args.action} for {args.subset=} {args.output} in {time.time() - start_time:.2f}s"
-    )
+    _run_action(args, input_path, subset, job_kwargs, hf_source)
+    return config
 
 
 if __name__ == "__main__":
